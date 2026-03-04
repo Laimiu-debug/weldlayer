@@ -56,6 +56,11 @@ body {
   font-size: 18px;
 }
 
+.card h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -65,7 +70,8 @@ label {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid #c6d3df;
   border-radius: 8px;
@@ -91,9 +97,134 @@ button {
   cursor: pointer;
 }
 
+button.secondary {
+  background: #256089;
+}
+
+button.ghost {
+  background: #f0f5fa;
+  border: 1px solid #d1deea;
+  color: #2b587a;
+}
+
+button.danger {
+  background: #fff4f4;
+  border-color: #e2b5b5;
+  color: #9d2c2c;
+}
+
+button.active {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.2);
+}
+
 button[disabled] {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.template-panel {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.template-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.template-row input,
+.template-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.result-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.result-structured {
+  display: grid;
+  gap: 10px;
+}
+
+.result-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.kpi-item {
+  border-radius: 8px;
+  border: 1px solid #d3e0ec;
+  background: #f5f9fc;
+  padding: 8px 10px;
+}
+
+.kpi-item span {
+  display: block;
+  color: #5c778f;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.kpi-item strong {
+  color: #26455f;
+  font-size: 13px;
+}
+
+.result-block {
+  border-radius: 8px;
+  border: 1px solid #d6e2ee;
+  background: #fbfdff;
+  padding: 10px;
+}
+
+.table-wrap {
+  overflow: auto;
+  max-height: 220px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e4edf5;
+  white-space: nowrap;
+}
+
+th {
+  background: #f1f6fb;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.flat-list {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.flat-list li {
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.muted {
+  margin: 0;
+  color: #5b7388;
+  font-size: 12px;
 }
 
 pre {
@@ -133,5 +264,19 @@ pre {
 @media (max-width: 980px) {
   .layout {
     grid-template-columns: 1fr;
+  }
+
+  .result-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .template-row {
+    flex-wrap: wrap;
+  }
+
+  .template-row button {
+    flex: 1;
   }
 }
