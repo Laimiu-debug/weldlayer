@@ -717,6 +717,18 @@ async function reloadBatchRowsFromBackend() {
   renderBatch();
 }
 
+async function bootstrapMasterDataFromBackend() {
+  if (typeof window.__TAURI_INTERNALS__?.invoke !== "function") {
+    return;
+  }
+  try {
+    await Promise.all([reloadPqrRowsFromBackend(), reloadWelderRowsFromBackend(), reloadBatchRowsFromBackend()]);
+    addEvent("master data loaded from backend");
+  } catch (error) {
+    addEvent(`startup master data load skipped: ${String(error)}`);
+  }
+}
+
 async function invokeTauriCommand(command, args) {
   const invoke = window.__TAURI_INTERNALS__?.invoke;
   if (typeof invoke !== "function") {
@@ -1192,6 +1204,7 @@ function init() {
   renderConflicts("all");
   setStatusSnapshot();
   initHandlers();
+  bootstrapMasterDataFromBackend();
   startClock();
 }
 
