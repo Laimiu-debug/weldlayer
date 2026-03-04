@@ -37,6 +37,13 @@ body {
   color: #49637a;
 }
 
+.template-tools {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
 .layout {
   display: grid;
   gap: 12px;

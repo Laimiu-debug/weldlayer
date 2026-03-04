@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { ChangeEvent, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { matchExample, parseExample } from "./examples";
 
 const TEMPLATE_STORAGE_KEY = "weldlayer.request.templates.v1";
 const MAX_TEMPLATE_COUNT = 50;
+const TEMPLATE_EXPORT_VERSION = 1;
 
 type LogLevel = "info" | "error";
 type TemplateType = "match" | "parse";
@@ -103,6 +104,16 @@ function normalizeTemplate(input: unknown): RequestTemplate | null {
   };
 }
 
+function normalizeTemplateList(input: unknown): RequestTemplate[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .map((item) => normalizeTemplate(item))
+    .filter((item): item is RequestTemplate => item !== null);
+}
+
 function loadTemplatesFromStorage(): RequestTemplate[] {
   if (typeof window === "undefined") {
     return [];
@@ -135,6 +146,32 @@ function persistTemplatesToStorage(templates: RequestTemplate[]): void {
   window.localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
 }
 
+function mergeTemplates(existing: RequestTemplate[], imported: RequestTemplate[]): RequestTemplate[] {
+  const map = new Map<string, RequestTemplate>();
+
+  for (const template of existing) {
+    map.set(`${template.type}:${template.name}`, template);
+  }
+
+  for (const template of imported) {
+    map.set(`${template.type}:${template.name}`, template);
+  }
+
+  return [...map.values()]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, MAX_TEMPLATE_COUNT);
+}
+
+function readImportTemplates(input: unknown): RequestTemplate[] {
+  if (Array.isArray(input)) {
+    return normalizeTemplateList(input);
+  }
+  if (!isRecord(input)) {
+    return [];
+  }
+  return normalizeTemplateList(input.templates);
+}
+
 function toParseResponseView(input: unknown): ParseResponseView | null {
   if (!isRecord(input)) {
     return null;
@@ -159,6 +196,7 @@ function toParseResponseView(input: unknown): ParseResponseView | null {
 }
 
 export default function App() {
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [dbPath, setDbPath] = useState("weldlayer.db");
   const [projectName, setProjectName] = useState("Desktop Demo Project");
   const [matchRequest, setMatchRequest] = useState(pretty(matchExample));
@@ -355,11 +393,79 @@ export default function App() {
     appendLog("info", `${type} template deleted: ${template.name}`);
   };
 
+  const exportTemplates = () => {
+    if (templates.length === 0) {
+      appendLog("error", "template export failed: no templates to export");
+      return;
+    }
+
+    const payload = {
+      schema: "weldlayer-templates",
+      version: TEMPLATE_EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      templates
+    };
+    const blob = new Blob([pretty(payload)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    link.href = url;
+    link.download = `weldlayer-templates-${stamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    appendLog("info", `template export completed: ${templates.length} items`);
+  };
+
+  const triggerImportDialog = () => {
+    importInputRef.current?.click();
+  };
+
+  const importTemplates = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const imported = readImportTemplates(parsed);
+
+      if (imported.length === 0) {
+        appendLog("error", "template import failed: no valid templates found in file");
+        return;
+      }
+
+      setTemplates((prev) => {
+        const merged = mergeTemplates(prev, imported);
+        persistTemplatesToStorage(merged);
+        return merged;
+      });
+
+      appendLog("info", `template import completed: ${imported.length} items`);
+    } catch (error) {
+      appendLog("error", `template import failed: ${String(error)}`);
+    }
+  };
+
   return (
     <div className="app">
       <header className="header">
         <h1>WeldLayer Desktop Shell</h1>
         <p>{tauriReady ? "Tauri runtime detected." : "Browser mode only. Run with Tauri to invoke commands."}</p>
+        <div className="template-tools">
+          <button className="secondary" disabled={busy} onClick={exportTemplates}>
+            Export Templates
+          </button>
+          <button className="ghost" disabled={busy} onClick={triggerImportDialog}>
+            Import Templates
+          </button>
+          <input ref={importInputRef} type="file" accept=".json,application/json" hidden onChange={importTemplates} />
+        </div>
       </header>
 
       <main className="layout">
