@@ -532,6 +532,57 @@ function setMasterDirty(scope, dirty = true) {
   syncMasterToolbarState();
 }
 
+function validatePqrRow(row) {
+  const standard = normalizeTextInput(String(row.standard || "").toUpperCase().replace(/\s+/g, "_"));
+  if (!standard.ok || (standard.value !== "ASME_IX" && standard.value !== "CN_GB")) {
+    return `PQR ${row.id}: invalid standard`;
+  }
+  if (!normalizeTextInput(row.process).ok) return `PQR ${row.id}: process is required`;
+  if (!normalizeTextInput(row.pos).ok) return `PQR ${row.id}: position is required`;
+  if (!normalizeThicknessRangeInput(row.range).ok) return `PQR ${row.id}: range must be min-max`;
+  if (!normalizeNumberInput(row.maxDelta, 0).ok) return `PQR ${row.id}: maxDelta must be >= 0`;
+  if (!normalizeDateInput(row.valid, true).ok) return `PQR ${row.id}: valid date must be YYYY-MM-DD`;
+  return "";
+}
+
+function validateWelderRow(row) {
+  if (!normalizeTextInput(row.cert).ok) return `Welder ${row.id}: cert is required`;
+  if (!normalizeTextInput(row.process).ok) return `Welder ${row.id}: process is required`;
+  if (!normalizeTextInput(row.pos).ok) return `Welder ${row.id}: position is required`;
+  if (!normalizeTextInput(row.group).ok) return `Welder ${row.id}: group is required`;
+  if (!normalizeNumberInput(row.thicknessDeltaMax, 0).ok) return `Welder ${row.id}: thicknessDeltaMax must be >= 0`;
+  if (!normalizeDateInput(row.exp, true).ok) return `Welder ${row.id}: expiry date must be YYYY-MM-DD`;
+  return "";
+}
+
+function validateBatchRow(row) {
+  if (!normalizeTextInput(row.batch_no).ok) return "Batch: batch_no is required";
+  if (!normalizeTextInput(row.material_code).ok) return `Batch ${row.batch_no}: material code is required`;
+  if (!normalizeTextInput(row.spec_standard).ok) return `Batch ${row.batch_no}: spec standard is required`;
+  if (!normalizeNumberInput(row.qty_available, 0).ok) return `Batch ${row.batch_no}: qty_available must be >= 0`;
+  if (!normalizeNumberInput(row.safety_stock, 0).ok) return `Batch ${row.batch_no}: safety_stock must be >= 0`;
+  if (!normalizeDateInput(row.expiry_date, true).ok) return `Batch ${row.batch_no}: expiry date must be YYYY-MM-DD`;
+  return "";
+}
+
+function ensureMasterRowsValid(scope) {
+  const rows =
+    scope === "pqr" ? appState.pqrRows : scope === "welder" ? appState.welderRows : scope === "batch" ? appState.batchRows : [];
+  const validate = scope === "pqr" ? validatePqrRow : scope === "welder" ? validateWelderRow : validateBatchRow;
+  for (const row of rows) {
+    const error = validate(row);
+    if (error) {
+      addEvent(error);
+      return false;
+    }
+  }
+  return true;
+}
+
+function ensureAllMasterRowsValid() {
+  return ensureMasterRowsValid("pqr") && ensureMasterRowsValid("welder") && ensureMasterRowsValid("batch");
+}
+
 function renderBatch() {
   if (!batchBody) return;
   batchBody.innerHTML = appState.batchRows
@@ -950,6 +1001,10 @@ function runMatchFallback() {
 }
 
 async function runMatch() {
+  if (!ensureAllMasterRowsValid()) {
+    addEvent("run match canceled: master data validation failed");
+    return;
+  }
   try {
     await syncMasterDataToBackend();
     const requestPayload = buildMatchRequestPayload(true);
@@ -1125,6 +1180,7 @@ function initHandlers() {
   }
   if (pqrToolbarButtons.sync) {
     pqrToolbarButtons.sync.addEventListener("click", async () => {
+      if (!ensureMasterRowsValid("pqr")) return;
       try {
         await syncRowsToBackend(appState.pqrRows, {
           list: "list_pqrs",
@@ -1265,6 +1321,7 @@ function initHandlers() {
   }
   if (welderToolbarButtons.sync) {
     welderToolbarButtons.sync.addEventListener("click", async () => {
+      if (!ensureMasterRowsValid("welder")) return;
       try {
         await syncRowsToBackend(appState.welderRows, {
           list: "list_welders",
@@ -1447,6 +1504,7 @@ function initHandlers() {
   const batchSyncBtn = document.querySelector("#btn-batch-sync");
   if (batchSyncBtn) {
     batchSyncBtn.addEventListener("click", async () => {
+      if (!ensureMasterRowsValid("batch")) return;
       try {
         await syncRowsToBackend(appState.batchRows, {
           list: "list_batches",
