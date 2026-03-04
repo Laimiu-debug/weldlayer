@@ -6,7 +6,7 @@
 
 - `field_key`
 - `field_name`
-- `module`（`weld_seam/pqr/welder/template`）
+- `module`（`weld_seam/pqr/welder/consumable/template`）
 - `data_type`（`string/number/enum/date/bool`）
 - `required`
 - `is_enabled`
@@ -77,7 +77,31 @@
 - `expiry_date`
 - `status`
 
-## 5. 模板映射模块（template）
+## 5. 焊材库与库存模块（consumable）
+
+最小字段：
+
+- `consumable_id`
+- `material_code`（焊材牌号/型号）
+- `spec_standard`（执行标准）
+- `diameter_mm`
+- `process_scope`（适用焊接方法）
+- `material_group_scope`（适用母材组）
+- `batch_no`
+- `lot_no`
+- `warehouse_code`
+- `location_code`
+- `qty_on_hand`（当前库存）
+- `qty_available`（可用库存）
+- `safety_stock`（安全库存）
+- `uom`（单位）
+- `mfg_date`
+- `expiry_date`
+- `status`（`active/hold/expired`）
+- `updated_by`
+- `updated_at`
+
+## 6. 模板映射模块（template）
 
 最小字段：
 
@@ -94,19 +118,26 @@
 - `export_pdf`
 - `preview_visible`
 
-## 6. 关键校验规则
+## 7. 关键校验规则
 
 - 范围校验：`min <= max`
 - 数值校验：厚度、管径、热输入必须大于 0
 - 日期校验：`valid_to >= valid_from`、`expiry_date >= test_date`
 - 枚举校验：`process_code`、`position_code` 必须在标准包枚举内
 - 追溯校验：人工修改必须记录操作人、时间、原因
+- 库存校验：
+  - `qty_available >= required_qty`（strict 模式下为硬约束）
+  - `qty_available < safety_stock` 触发预警
+  - `expiry_date` 距离当前阈值天数内触发临期预警
+  - `material_code/spec_standard` 必须满足工艺要求
 
-## 7. 条款引用格式
+## 8. 条款引用格式
 
 统一采用：`<STANDARD>:<CLAUSE>`
 
 示例：
 
 - `ASME_IX:QW-452.1(b)`
-- `CN_GB:GB_RULE_PQR_THK_001`（可先规则 ID 占位）
+- `CN_GB:GB_RULE_PQR_THK_001`
+- `INVENTORY:STOCK_MIN_001`
+- `INVENTORY:EXPIRY_WARN_001`
