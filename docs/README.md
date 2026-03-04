@@ -27,6 +27,7 @@
 16. `engineering/16-Backend-Scaffold-v0.md`
 17. `engineering/17-SQLite-Store-v0.md`
 18. `engineering/18-Engine-CLI-v0.md`
+19. `engineering/19-App-Service-v0.md`
 
 ## 说明
 

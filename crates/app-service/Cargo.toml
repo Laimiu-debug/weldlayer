@@ -1,11 +1,13 @@
 [package]
-name = "engine-cli"
+name = "app-service"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [dependencies]
-app-service = { path = "../app-service" }
 contracts = { path = "../contracts" }
+core-engine = { path = "../core-engine" }
+core-store = { path = "../core-store" }
 serde_json = { workspace = true }
+thiserror = { workspace = true }

@@ -15,15 +15,22 @@
 ## 3. 执行方式
 
 ```bash
-cargo run -p engine-cli -- weldlayer.db
+cargo run -p engine-cli -- match weldlayer.db
+cargo run -p engine-cli -- parse
 ```
 
-执行后会：
+`match` 执行后会：
 
 1. 构造样例 `MatchRequest`
 2. 调用 `run_match`
 3. 写入 `projects/match_reports/audit_logs`
 4. 输出 JSON 摘要到 stdout
+
+`parse` 执行后会：
+
+1. 构造样例 `ParseRequest`
+2. 调用 `app-service` 触发 Python sidecar
+3. 输出解析摘要到 stdout
 
 ## 4. 后续
 

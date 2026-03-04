@@ -1,70 +1,77 @@
+use app_service::{run_match_and_persist, run_parse_via_sidecar, SidecarConfig};
 use contracts::matching::{
     ConsumableBatch, InventoryPolicy, MatchRequest, PqrCandidate, RequiredConsumable, ReviewStatus, StandardCode,
     WelderCandidate, WeldSeam,
 };
-use core_engine::run_match;
-use core_store::Store;
+use contracts::parser::{ParseOptions, ParseRequest, SourceFile, SourceFileType};
 
 fn main() {
-    let db_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "weldlayer.db".to_string());
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let subcmd = args.first().map(|s| s.as_str()).unwrap_or("match");
 
-    let request = sample_request();
-    let response = match run_match(&request) {
-        Ok(response) => response,
-        Err(err) => {
-            eprintln!("engine error: {err}");
-            std::process::exit(1);
+    match subcmd {
+        "match" => {
+            let db_path = args
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| "weldlayer.db".to_string());
+            let request = sample_match_request(generate_trace_id());
+            let response = match run_match_and_persist(&db_path, "Demo Project", &request) {
+                Ok(response) => response,
+                Err(err) => {
+                    eprintln!("app service error: {err}");
+                    std::process::exit(1);
+                }
+            };
+            let output = serde_json::json!({
+                "db_path": db_path,
+                "trace_id": response.trace_id,
+                "decision": format!("{:?}", response.decision).to_lowercase(),
+                "recommended": response.recommended.as_ref().map(|r| {
+                    serde_json::json!({
+                        "pqr_id": r.pqr_id,
+                        "welder_id": r.welder_id,
+                        "score": r.score.final_score
+                    })
+                }),
+                "hard_conflicts": response.hard_conflicts.len(),
+                "inventory_alerts": response.inventory_alerts.len()
+            });
+            println!("{output}");
         }
-    };
-
-    let store = match Store::open(&db_path) {
-        Ok(store) => store,
-        Err(err) => {
-            eprintln!("open store failed: {err}");
-            std::process::exit(2);
+        "parse" => {
+            let request = sample_parse_request(generate_trace_id());
+            let sidecar = SidecarConfig::default();
+            let response = match run_parse_via_sidecar(&sidecar, &request) {
+                Ok(response) => response,
+                Err(err) => {
+                    eprintln!("parse service error: {err}");
+                    std::process::exit(2);
+                }
+            };
+            println!(
+                "{}",
+                serde_json::json!({
+                    "trace_id": response.trace_id,
+                    "status": response.status,
+                    "seam_count": response.seams.len(),
+                    "error_count": response.errors.len()
+                })
+            );
         }
-    };
-
-    if let Err(err) = store.upsert_project(&request.project_id, "Demo Project", &request.standard_code) {
-        eprintln!("upsert project failed: {err}");
-        std::process::exit(3);
+        _ => {
+            eprintln!("unknown subcommand: {subcmd}");
+            eprintln!("usage:");
+            eprintln!("  engine-cli match [db_path]");
+            eprintln!("  engine-cli parse");
+            std::process::exit(64);
+        }
     }
-    if let Err(err) = store.insert_match_report(&request, &response) {
-        eprintln!("save report failed: {err}");
-        std::process::exit(4);
-    }
-    if let Err(err) = store.insert_audit_log(
-        &response.trace_id,
-        "run_match",
-        &format!("{:?}", response.decision).to_lowercase(),
-        "{}",
-    ) {
-        eprintln!("save audit log failed: {err}");
-        std::process::exit(5);
-    }
-
-    let output = serde_json::json!({
-        "db_path": db_path,
-        "trace_id": response.trace_id,
-        "decision": format!("{:?}", response.decision).to_lowercase(),
-        "recommended": response.recommended.as_ref().map(|r| {
-            serde_json::json!({
-                "pqr_id": r.pqr_id,
-                "welder_id": r.welder_id,
-                "score": r.score.final_score
-            })
-        }),
-        "hard_conflicts": response.hard_conflicts.len(),
-        "inventory_alerts": response.inventory_alerts.len()
-    });
-    println!("{output}");
 }
 
-fn sample_request() -> MatchRequest {
+fn sample_match_request(trace_id: String) -> MatchRequest {
     MatchRequest {
-        trace_id: "TRC-CLI-20260304-00001".to_string(),
+        trace_id,
         project_id: "PRJ-CLI-001".to_string(),
         standard_code: StandardCode::AsmeIx,
         inventory_policy: InventoryPolicy::Warn,
@@ -148,5 +155,36 @@ fn sample_request() -> MatchRequest {
                 status: "active".to_string(),
             },
         ],
+    }
+}
+
+fn generate_trace_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("TRC-CLI-{ts}")
+}
+
+fn sample_parse_request(trace_id: String) -> ParseRequest {
+    ParseRequest {
+        trace_id,
+        project_id: "PRJ-CLI-001".to_string(),
+        files: vec![
+            SourceFile {
+                path: "G:/drawings/pressure_line_01.pdf".to_string(),
+                file_type: SourceFileType::Pdf,
+            },
+            SourceFile {
+                path: "G:/drawings/vessel_joint_revB.dwg".to_string(),
+                file_type: SourceFileType::Dwg,
+            },
+        ],
+        options: ParseOptions {
+            detect_weld_symbols: true,
+            detect_sections: true,
+            language: "zh-CN".to_string(),
+        },
     }
 }
