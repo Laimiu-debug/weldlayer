@@ -1,4 +1,27 @@
 const THICKNESS_DIFF_THRESHOLD = 3;
+const PROTOTYPE_DB_PATH = "weldlayer.db";
+const PROTOTYPE_PROJECT_ID = "PRJ-PROTOTYPE-001";
+const MASTER_DATA_SYNC_LIMIT = 1000;
+const MASTER_BATCH_ROWS = [
+  {
+    batch_no: "B-001",
+    material_code: "ER70S-6",
+    spec_standard: "AWS A5.18",
+    qty_available: 12.0,
+    safety_stock: 6.0,
+    expiry_date: "2027-03-01",
+    status: "active"
+  },
+  {
+    batch_no: "B-002",
+    material_code: "ER308L",
+    spec_standard: "AWS A5.9",
+    qty_available: 3.0,
+    safety_stock: 4.0,
+    expiry_date: "2026-06-15",
+    status: "active"
+  }
+];
 
 const appState = {
   view: "project",
@@ -456,11 +479,11 @@ function toReviewStatus(status) {
   return "pending";
 }
 
-function buildMatchRequestPayload() {
+function buildMatchRequestPayload(useStoredMasterData = false) {
   const standardCode = toStandardCode(appState.standard);
   return {
     trace_id: appState.traceId,
-    project_id: "PRJ-PROTOTYPE-001",
+    project_id: PROTOTYPE_PROJECT_ID,
     standard_code: standardCode,
     inventory_policy: "warn",
     top_k: 3,
@@ -474,61 +497,167 @@ function buildMatchRequestPayload() {
       process_hint: "GTAW",
       review_status: toReviewStatus(row.status)
     })),
-    pqr_candidates: appState.pqrRows.map((row) => {
-      const range = parseThicknessRange(row.range);
-      return {
-        pqr_id: row.id,
-        standard_code: toStandardCode(row.standard),
-        process_code: String(row.process).split("+")[0],
-        material_group_scope: ["P-No.1", "P-No.8", "P-No.11"],
-        thickness_min_mm: range.min,
-        thickness_max_mm: range.max,
-        position_scope: splitScope(row.pos),
-        dissimilar_support: Boolean(row.dissimilar),
-        thickness_mismatch_support: Boolean(row.thicknessMismatch),
-        thickness_delta_max_mm: Number(row.maxDelta) || 0,
-        valid_to: row.valid,
-        status: row.status
-      };
-    }),
-    welder_candidates: appState.welderRows.map((row) => ({
-      welder_id: row.id,
-      cert_no: row.cert,
-      standard_code: standardCode,
-      process_code: String(row.process).split("+")[0],
-      material_group_scope: splitScope(row.group),
-      position_scope: splitScope(row.pos),
-      dissimilar_qualified: Boolean(row.dissimilarQualified),
-      thickness_mismatch_qualified: Boolean(row.thicknessMismatchQualified),
-      thickness_delta_max_mm: Number(row.thicknessDeltaMax) || 0,
-      expiry_date: row.exp,
-      status: row.status === "active" ? "active" : "inactive"
-    })),
+    pqr_candidates: useStoredMasterData ? [] : appState.pqrRows.map((row) => pqrRowToCandidate(row)),
+    welder_candidates: useStoredMasterData
+      ? []
+      : appState.welderRows.map((row) => welderRowToCandidate(row, standardCode)),
     required_consumables: [
       { material_code: "ER70S-6", required_qty: 8.0 },
       { material_code: "ER308L", required_qty: 5.0 }
     ],
-    consumable_batches: [
-      {
-        batch_no: "B-001",
-        material_code: "ER70S-6",
-        spec_standard: "AWS A5.18",
-        qty_available: 12.0,
-        safety_stock: 6.0,
-        expiry_date: "2027-03-01",
-        status: "active"
-      },
-      {
-        batch_no: "B-002",
-        material_code: "ER308L",
-        spec_standard: "AWS A5.9",
-        qty_available: 3.0,
-        safety_stock: 4.0,
-        expiry_date: "2026-06-15",
-        status: "active"
-      }
-    ]
+    consumable_batches: useStoredMasterData ? [] : MASTER_BATCH_ROWS
   };
+}
+
+function fromStandardCode(code) {
+  return String(code || "").toLowerCase() === "cn_gb" ? "CN_GB" : "ASME_IX";
+}
+
+function pqrRowToCandidate(row) {
+  const range = parseThicknessRange(row.range);
+  return {
+    pqr_id: row.id,
+    standard_code: toStandardCode(row.standard),
+    process_code: String(row.process).split("+")[0],
+    material_group_scope: ["P-No.1", "P-No.8", "P-No.11"],
+    thickness_min_mm: range.min,
+    thickness_max_mm: range.max,
+    position_scope: splitScope(row.pos),
+    dissimilar_support: Boolean(row.dissimilar),
+    thickness_mismatch_support: Boolean(row.thicknessMismatch),
+    thickness_delta_max_mm: Number(row.maxDelta) || 0,
+    valid_to: row.valid,
+    status: row.status === "active" ? "active" : "inactive"
+  };
+}
+
+function welderRowToCandidate(row, standardCode = toStandardCode(appState.standard)) {
+  return {
+    welder_id: row.id,
+    cert_no: row.cert,
+    standard_code: standardCode,
+    process_code: String(row.process).split("+")[0],
+    material_group_scope: splitScope(row.group),
+    position_scope: splitScope(row.pos),
+    dissimilar_qualified: Boolean(row.dissimilarQualified),
+    thickness_mismatch_qualified: Boolean(row.thicknessMismatchQualified),
+    thickness_delta_max_mm: Number(row.thicknessDeltaMax) || 0,
+    expiry_date: row.exp,
+    status: row.status === "active" ? "active" : "inactive"
+  };
+}
+
+function pqrCandidateToRow(item) {
+  return {
+    id: item.pqr_id,
+    standard: fromStandardCode(item.standard_code),
+    process: item.process_code,
+    range: `${Number(item.thickness_min_mm) || 0}-${Number(item.thickness_max_mm) || 0}`,
+    pos: Array.isArray(item.position_scope) ? item.position_scope.join("/") : "",
+    dissimilar: Boolean(item.dissimilar_support),
+    thicknessMismatch: Boolean(item.thickness_mismatch_support),
+    maxDelta: Number(item.thickness_delta_max_mm) || 0,
+    valid: item.valid_to || "",
+    status: item.status || "active"
+  };
+}
+
+function welderCandidateToRow(item) {
+  return {
+    id: item.welder_id,
+    cert: item.cert_no,
+    process: item.process_code,
+    pos: Array.isArray(item.position_scope) ? item.position_scope.join("/") : "",
+    group: Array.isArray(item.material_group_scope) ? item.material_group_scope.join("/") : "",
+    dissimilarQualified: Boolean(item.dissimilar_qualified),
+    thicknessMismatchQualified: Boolean(item.thickness_mismatch_qualified),
+    thicknessDeltaMax: Number(item.thickness_delta_max_mm) || 0,
+    exp: item.expiry_date || "",
+    status: item.status || "active"
+  };
+}
+
+async function listCommandItems(commandName) {
+  const payload = await invokeTauriCommand(commandName, {
+    dbPath: PROTOTYPE_DB_PATH,
+    projectId: PROTOTYPE_PROJECT_ID,
+    limit: MASTER_DATA_SYNC_LIMIT
+  });
+  return JSON.parse(payload);
+}
+
+async function syncRowsToBackend(rows, commandSet) {
+  const remoteRows = await listCommandItems(commandSet.list);
+  const remoteIds = new Set(remoteRows.map((item) => String(item[commandSet.idField] || "")));
+  const localIds = new Set(rows.map((row) => String(commandSet.localId(row) || "")));
+
+  for (const remote of remoteRows) {
+    const id = String(remote[commandSet.idField] || "");
+    if (id && !localIds.has(id)) {
+      await invokeTauriCommand(commandSet.delete, {
+        dbPath: PROTOTYPE_DB_PATH,
+        projectId: PROTOTYPE_PROJECT_ID,
+        [commandSet.deleteIdArg]: id
+      });
+    }
+  }
+
+  for (const row of rows) {
+    await invokeTauriCommand(commandSet.upsert, {
+      dbPath: PROTOTYPE_DB_PATH,
+      projectId: PROTOTYPE_PROJECT_ID,
+      [commandSet.upsertArg]: JSON.stringify(commandSet.toPayload(row))
+    });
+  }
+
+  return { localCount: rows.length, remoteCount: remoteIds.size };
+}
+
+async function syncMasterDataToBackend() {
+  await syncRowsToBackend(appState.pqrRows, {
+    list: "list_pqrs",
+    upsert: "upsert_pqr",
+    delete: "delete_pqr",
+    upsertArg: "pqrJson",
+    deleteIdArg: "pqrId",
+    idField: "pqr_id",
+    localId: (row) => row.id,
+    toPayload: (row) => pqrRowToCandidate(row)
+  });
+
+  await syncRowsToBackend(appState.welderRows, {
+    list: "list_welders",
+    upsert: "upsert_welder",
+    delete: "delete_welder",
+    upsertArg: "welderJson",
+    deleteIdArg: "welderId",
+    idField: "welder_id",
+    localId: (row) => row.id,
+    toPayload: (row) => welderRowToCandidate(row)
+  });
+
+  await syncRowsToBackend(MASTER_BATCH_ROWS, {
+    list: "list_batches",
+    upsert: "upsert_batch",
+    delete: "delete_batch",
+    upsertArg: "batchJson",
+    deleteIdArg: "batchNo",
+    idField: "batch_no",
+    localId: (row) => row.batch_no,
+    toPayload: (row) => row
+  });
+}
+
+async function reloadPqrRowsFromBackend() {
+  const rows = await listCommandItems("list_pqrs");
+  appState.pqrRows = rows.map((item) => pqrCandidateToRow(item));
+  renderPqr();
+}
+
+async function reloadWelderRowsFromBackend() {
+  const rows = await listCommandItems("list_welders");
+  appState.welderRows = rows.map((item) => welderCandidateToRow(item));
+  renderWelder();
 }
 
 async function invokeTauriCommand(command, args) {
@@ -584,9 +713,10 @@ function runMatchFallback() {
 
 async function runMatch() {
   try {
-    const requestPayload = buildMatchRequestPayload();
+    await syncMasterDataToBackend();
+    const requestPayload = buildMatchRequestPayload(true);
     const responseJson = await invokeTauriCommand("run_match", {
-      dbPath: "weldlayer.db",
+      dbPath: PROTOTYPE_DB_PATH,
       projectName: "Prototype UI Project",
       requestJson: JSON.stringify(requestPayload)
     });
@@ -734,6 +864,54 @@ function initHandlers() {
 
   syncSortButtons();
   syncFilterButtons();
+
+  const pqrToolbarButtons = [
+    ...document.querySelectorAll('.view[data-view-panel="pqr"] .toolbar .button-row button')
+  ];
+  if (pqrToolbarButtons[0]) {
+    pqrToolbarButtons[0].addEventListener("click", async () => {
+      try {
+        await syncMasterDataToBackend();
+        addEvent("PQR/焊工/焊材批次 已同步到本地库");
+      } catch (error) {
+        addEvent(`主数据同步失败: ${String(error)}`);
+      }
+    });
+  }
+  if (pqrToolbarButtons[1]) {
+    pqrToolbarButtons[1].addEventListener("click", async () => {
+      try {
+        await reloadPqrRowsFromBackend();
+        addEvent("PQR 已从本地库加载");
+      } catch (error) {
+        addEvent(`PQR 加载失败: ${String(error)}`);
+      }
+    });
+  }
+
+  const welderToolbarButtons = [
+    ...document.querySelectorAll('.view[data-view-panel="welder"] .toolbar .button-row button')
+  ];
+  if (welderToolbarButtons[0]) {
+    welderToolbarButtons[0].addEventListener("click", async () => {
+      try {
+        await syncMasterDataToBackend();
+        addEvent("PQR/焊工/焊材批次 已同步到本地库");
+      } catch (error) {
+        addEvent(`主数据同步失败: ${String(error)}`);
+      }
+    });
+  }
+  if (welderToolbarButtons[1]) {
+    welderToolbarButtons[1].addEventListener("click", async () => {
+      try {
+        await reloadWelderRowsFromBackend();
+        addEvent("焊工 已从本地库加载");
+      } catch (error) {
+        addEvent(`焊工加载失败: ${String(error)}`);
+      }
+    });
+  }
 
   document.querySelector("#project-form").addEventListener("submit", (event) => {
     event.preventDefault();
