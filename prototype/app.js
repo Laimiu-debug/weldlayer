@@ -344,15 +344,19 @@ function renderPqr() {
       return `
         <tr>
           <td>${row.id}</td>
-          <td>${row.standard}</td>
-          <td>${row.process}</td>
-          <td>${row.range}</td>
-          <td>${row.pos}</td>
-          <td>${statusTag(row.dissimilar ? "支持" : "不支持", row.dissimilar ? "ok" : "warn")}</td>
-          <td>${statusTag(row.thicknessMismatch ? "支持" : "不支持", row.thicknessMismatch ? "ok" : "warn")}</td>
-          <td>${row.maxDelta}</td>
-          <td>${row.valid}</td>
-          <td>${statusTag(row.status, statusType)}</td>
+          <td contenteditable="true" data-pqr-edit="${row.id}:standard">${row.standard}</td>
+          <td contenteditable="true" data-pqr-edit="${row.id}:process">${row.process}</td>
+          <td contenteditable="true" data-pqr-edit="${row.id}:range">${row.range}</td>
+          <td contenteditable="true" data-pqr-edit="${row.id}:pos">${row.pos}</td>
+          <td><button class="ghost" data-pqr-toggle="${row.id}:dissimilar">${row.dissimilar ? "Yes" : "No"}</button></td>
+          <td><button class="ghost" data-pqr-toggle="${row.id}:thicknessMismatch">${row.thicknessMismatch ? "Yes" : "No"}</button></td>
+          <td contenteditable="true" data-pqr-edit="${row.id}:maxDelta">${row.maxDelta}</td>
+          <td contenteditable="true" data-pqr-edit="${row.id}:valid">${row.valid}</td>
+          <td>
+            ${statusTag(row.status, statusType)}
+            <button class="ghost" data-pqr-toggle="${row.id}:status">Toggle</button>
+            <button class="ghost" data-pqr-delete="${row.id}">Delete</button>
+          </td>
         </tr>
       `;
     })
@@ -367,15 +371,19 @@ function renderWelder() {
       return `
         <tr>
           <td>${row.id}</td>
-          <td>${row.cert}</td>
-          <td>${row.process}</td>
-          <td>${row.pos}</td>
-          <td>${row.group}</td>
-          <td>${statusTag(row.dissimilarQualified ? "具备" : "无", row.dissimilarQualified ? "ok" : "warn")}</td>
-          <td>${statusTag(row.thicknessMismatchQualified ? "具备" : "无", row.thicknessMismatchQualified ? "ok" : "warn")}</td>
-          <td>${row.thicknessDeltaMax}</td>
-          <td>${row.exp}</td>
-          <td>${statusTag(row.status, statusType)}</td>
+          <td contenteditable="true" data-welder-edit="${row.id}:cert">${row.cert}</td>
+          <td contenteditable="true" data-welder-edit="${row.id}:process">${row.process}</td>
+          <td contenteditable="true" data-welder-edit="${row.id}:pos">${row.pos}</td>
+          <td contenteditable="true" data-welder-edit="${row.id}:group">${row.group}</td>
+          <td><button class="ghost" data-welder-toggle="${row.id}:dissimilarQualified">${row.dissimilarQualified ? "Yes" : "No"}</button></td>
+          <td><button class="ghost" data-welder-toggle="${row.id}:thicknessMismatchQualified">${row.thicknessMismatchQualified ? "Yes" : "No"}</button></td>
+          <td contenteditable="true" data-welder-edit="${row.id}:thicknessDeltaMax">${row.thicknessDeltaMax}</td>
+          <td contenteditable="true" data-welder-edit="${row.id}:exp">${row.exp}</td>
+          <td>
+            ${statusTag(row.status, statusType)}
+            <button class="ghost" data-welder-toggle="${row.id}:status">Toggle</button>
+            <button class="ghost" data-welder-delete="${row.id}">Delete</button>
+          </td>
         </tr>
       `;
     })
@@ -394,13 +402,62 @@ function normalizeBatchRow(item) {
   };
 }
 
-function getNextBatchNo() {
-  const existing = new Set(appState.batchRows.map((row) => String(row.batch_no || "")));
+function getNextSequenceId(existingValues, prefix, width = 3) {
+  const existing = new Set(existingValues.map((value) => String(value || "").trim()));
   let index = 1;
-  while (existing.has(`B-${String(index).padStart(3, "0")}`)) {
+  while (existing.has(`${prefix}-${String(index).padStart(width, "0")}`)) {
     index += 1;
   }
-  return `B-${String(index).padStart(3, "0")}`;
+  return `${prefix}-${String(index).padStart(width, "0")}`;
+}
+
+function getNextBatchNo() {
+  return getNextSequenceId(
+    appState.batchRows.map((row) => row.batch_no),
+    "B",
+    3
+  );
+}
+
+function getNextPqrId() {
+  return getNextSequenceId(
+    appState.pqrRows.map((row) => row.id),
+    "PQR",
+    3
+  );
+}
+
+function getNextWelderId() {
+  return getNextSequenceId(
+    appState.welderRows.map((row) => row.id),
+    "W",
+    3
+  );
+}
+
+function getNextCertNo() {
+  return getNextSequenceId(
+    appState.welderRows.map((row) => row.cert),
+    "CERT",
+    4
+  );
+}
+
+function ensureMasterToolbarButtons(viewKey, prefix, addLabel) {
+  const row = document.querySelector(`.view[data-view-panel="${viewKey}"] .toolbar .button-row`);
+  if (!row) return { add: null, sync: null, load: null };
+
+  row.innerHTML = `
+    <button class="ghost" id="btn-${prefix}-add">${addLabel}</button>
+    <button class="primary" id="btn-${prefix}-sync">Sync to Backend</button>
+    <button class="ghost" id="btn-${prefix}-load">Load from Backend</button>
+  `;
+
+  return {
+    add: row.querySelector(`#btn-${prefix}-add`),
+    sync: row.querySelector(`#btn-${prefix}-sync`),
+    load: row.querySelector(`#btn-${prefix}-load`)
+  };
 }
 
 function renderBatch() {
@@ -934,51 +991,211 @@ function initHandlers() {
   syncSortButtons();
   syncFilterButtons();
 
-  const pqrToolbarButtons = [
-    ...document.querySelectorAll('.view[data-view-panel="pqr"] .toolbar .button-row button')
-  ];
-  if (pqrToolbarButtons[0]) {
-    pqrToolbarButtons[0].addEventListener("click", async () => {
+  const pqrToolbarButtons = ensureMasterToolbarButtons("pqr", "pqr", "Add PQR");
+  if (pqrToolbarButtons.add) {
+    pqrToolbarButtons.add.addEventListener("click", () => {
+      appState.pqrRows.push({
+        id: getNextPqrId(),
+        standard: appState.standard,
+        process: "GTAW",
+        range: "0-0",
+        pos: "1G",
+        dissimilar: false,
+        thicknessMismatch: false,
+        maxDelta: 0,
+        valid: "",
+        status: "active"
+      });
+      renderPqr();
+      addEvent("new pqr row added");
+    });
+  }
+  if (pqrToolbarButtons.sync) {
+    pqrToolbarButtons.sync.addEventListener("click", async () => {
       try {
-        await syncMasterDataToBackend();
-        addEvent("PQR/焊工/焊材批次 已同步到本地库");
+        await syncRowsToBackend(appState.pqrRows, {
+          list: "list_pqrs",
+          upsert: "upsert_pqr",
+          delete: "delete_pqr",
+          upsertArg: "pqrJson",
+          deleteIdArg: "pqrId",
+          idField: "pqr_id",
+          localId: (row) => row.id,
+          toPayload: (row) => pqrRowToCandidate(row)
+        });
+        addEvent("pqr rows synced to backend");
       } catch (error) {
-        addEvent(`主数据同步失败: ${String(error)}`);
+        addEvent(`pqr sync failed: ${String(error)}`);
       }
     });
   }
-  if (pqrToolbarButtons[1]) {
-    pqrToolbarButtons[1].addEventListener("click", async () => {
+  if (pqrToolbarButtons.load) {
+    pqrToolbarButtons.load.addEventListener("click", async () => {
       try {
         await reloadPqrRowsFromBackend();
-        addEvent("PQR 已从本地库加载");
+        addEvent("pqr rows loaded from backend");
       } catch (error) {
-        addEvent(`PQR 加载失败: ${String(error)}`);
+        addEvent(`pqr load failed: ${String(error)}`);
       }
     });
   }
 
-  const welderToolbarButtons = [
-    ...document.querySelectorAll('.view[data-view-panel="welder"] .toolbar .button-row button')
-  ];
-  if (welderToolbarButtons[0]) {
-    welderToolbarButtons[0].addEventListener("click", async () => {
+  if (pqrBody) {
+    pqrBody.addEventListener(
+      "blur",
+      (event) => {
+        const target = event.target;
+        const key = target?.dataset?.pqrEdit;
+        if (!key) return;
+        const [rowId, field] = key.split(":");
+        const row = appState.pqrRows.find((item) => item.id === rowId);
+        if (!row) return;
+        const value = target.textContent.trim();
+
+        if (field === "maxDelta") {
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            renderPqr();
+            return;
+          }
+          row[field] = parsed;
+        } else {
+          row[field] = value;
+        }
+        renderPqr();
+        addEvent(`pqr ${row.id} updated: ${field}`);
+      },
+      true
+    );
+
+    pqrBody.addEventListener("click", (event) => {
+      const toggleBtn = event.target.closest("[data-pqr-toggle]");
+      if (toggleBtn) {
+        const [rowId, field] = String(toggleBtn.dataset.pqrToggle || "").split(":");
+        const row = appState.pqrRows.find((item) => item.id === rowId);
+        if (!row) return;
+        if (field === "status") {
+          row.status = row.status === "active" ? "inactive" : "active";
+        } else {
+          row[field] = !row[field];
+        }
+        renderPqr();
+        addEvent(`pqr ${row.id} toggled: ${field}`);
+        return;
+      }
+
+      const deleteBtn = event.target.closest("[data-pqr-delete]");
+      if (!deleteBtn) return;
+      const rowId = String(deleteBtn.dataset.pqrDelete || "");
+      const idx = appState.pqrRows.findIndex((item) => item.id === rowId);
+      if (idx < 0) return;
+      const [removed] = appState.pqrRows.splice(idx, 1);
+      renderPqr();
+      addEvent(`pqr removed: ${removed?.id || rowId}`);
+    });
+  }
+
+  const welderToolbarButtons = ensureMasterToolbarButtons("welder", "welder", "Add Welder");
+  if (welderToolbarButtons.add) {
+    welderToolbarButtons.add.addEventListener("click", () => {
+      appState.welderRows.push({
+        id: getNextWelderId(),
+        cert: getNextCertNo(),
+        process: "GTAW",
+        pos: "1G",
+        group: "P-No.1",
+        dissimilarQualified: false,
+        thicknessMismatchQualified: false,
+        thicknessDeltaMax: 0,
+        exp: "",
+        status: "active"
+      });
+      renderWelder();
+      addEvent("new welder row added");
+    });
+  }
+  if (welderToolbarButtons.sync) {
+    welderToolbarButtons.sync.addEventListener("click", async () => {
       try {
-        await syncMasterDataToBackend();
-        addEvent("PQR/焊工/焊材批次 已同步到本地库");
+        await syncRowsToBackend(appState.welderRows, {
+          list: "list_welders",
+          upsert: "upsert_welder",
+          delete: "delete_welder",
+          upsertArg: "welderJson",
+          deleteIdArg: "welderId",
+          idField: "welder_id",
+          localId: (row) => row.id,
+          toPayload: (row) => welderRowToCandidate(row)
+        });
+        addEvent("welder rows synced to backend");
       } catch (error) {
-        addEvent(`主数据同步失败: ${String(error)}`);
+        addEvent(`welder sync failed: ${String(error)}`);
       }
     });
   }
-  if (welderToolbarButtons[1]) {
-    welderToolbarButtons[1].addEventListener("click", async () => {
+  if (welderToolbarButtons.load) {
+    welderToolbarButtons.load.addEventListener("click", async () => {
       try {
         await reloadWelderRowsFromBackend();
-        addEvent("焊工 已从本地库加载");
+        addEvent("welder rows loaded from backend");
       } catch (error) {
-        addEvent(`焊工加载失败: ${String(error)}`);
+        addEvent(`welder load failed: ${String(error)}`);
       }
+    });
+  }
+
+  if (welderBody) {
+    welderBody.addEventListener(
+      "blur",
+      (event) => {
+        const target = event.target;
+        const key = target?.dataset?.welderEdit;
+        if (!key) return;
+        const [rowId, field] = key.split(":");
+        const row = appState.welderRows.find((item) => item.id === rowId);
+        if (!row) return;
+        const value = target.textContent.trim();
+
+        if (field === "thicknessDeltaMax") {
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            renderWelder();
+            return;
+          }
+          row[field] = parsed;
+        } else {
+          row[field] = value;
+        }
+        renderWelder();
+        addEvent(`welder ${row.id} updated: ${field}`);
+      },
+      true
+    );
+
+    welderBody.addEventListener("click", (event) => {
+      const toggleBtn = event.target.closest("[data-welder-toggle]");
+      if (toggleBtn) {
+        const [rowId, field] = String(toggleBtn.dataset.welderToggle || "").split(":");
+        const row = appState.welderRows.find((item) => item.id === rowId);
+        if (!row) return;
+        if (field === "status") {
+          row.status = row.status === "active" ? "inactive" : "active";
+        } else {
+          row[field] = !row[field];
+        }
+        renderWelder();
+        addEvent(`welder ${row.id} toggled: ${field}`);
+        return;
+      }
+
+      const deleteBtn = event.target.closest("[data-welder-delete]");
+      if (!deleteBtn) return;
+      const rowId = String(deleteBtn.dataset.welderDelete || "");
+      const idx = appState.welderRows.findIndex((item) => item.id === rowId);
+      if (idx < 0) return;
+      const [removed] = appState.welderRows.splice(idx, 1);
+      renderWelder();
+      addEvent(`welder removed: ${removed?.id || rowId}`);
     });
   }
 
