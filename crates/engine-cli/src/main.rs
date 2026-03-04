@@ -15,7 +15,22 @@ fn main() {
                 .get(1)
                 .cloned()
                 .unwrap_or_else(|| "weldlayer.db".to_string());
-            let request = sample_match_request(generate_trace_id());
+            let request = if let Some(input_file) = args.get(2) {
+                match load_match_request_from_file(input_file) {
+                    Ok(mut req) => {
+                        if req.trace_id.trim().is_empty() {
+                            req.trace_id = generate_trace_id();
+                        }
+                        req
+                    }
+                    Err(err) => {
+                        eprintln!("failed to load match request from {input_file}: {err}");
+                        std::process::exit(65);
+                    }
+                }
+            } else {
+                sample_match_request(generate_trace_id())
+            };
             let response = match run_match_and_persist(&db_path, "Demo Project", &request) {
                 Ok(response) => response,
                 Err(err) => {
@@ -40,7 +55,22 @@ fn main() {
             println!("{output}");
         }
         "parse" => {
-            let request = sample_parse_request(generate_trace_id());
+            let request = if let Some(input_file) = args.get(1) {
+                match load_parse_request_from_file(input_file) {
+                    Ok(mut req) => {
+                        if req.trace_id.trim().is_empty() {
+                            req.trace_id = generate_trace_id();
+                        }
+                        req
+                    }
+                    Err(err) => {
+                        eprintln!("failed to load parse request from {input_file}: {err}");
+                        std::process::exit(66);
+                    }
+                }
+            } else {
+                sample_parse_request(generate_trace_id())
+            };
             let sidecar = SidecarConfig::default();
             let response = match run_parse_via_sidecar(&sidecar, &request) {
                 Ok(response) => response,
@@ -62,8 +92,8 @@ fn main() {
         _ => {
             eprintln!("unknown subcommand: {subcmd}");
             eprintln!("usage:");
-            eprintln!("  engine-cli match [db_path]");
-            eprintln!("  engine-cli parse");
+            eprintln!("  engine-cli match [db_path] [match_request.json]");
+            eprintln!("  engine-cli parse [parse_request.json]");
             std::process::exit(64);
         }
     }
@@ -187,4 +217,14 @@ fn sample_parse_request(trace_id: String) -> ParseRequest {
             language: "zh-CN".to_string(),
         },
     }
+}
+
+fn load_match_request_from_file(path: &str) -> Result<MatchRequest, String> {
+    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str::<MatchRequest>(&raw).map_err(|e| e.to_string())
+}
+
+fn load_parse_request_from_file(path: &str) -> Result<ParseRequest, String> {
+    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str::<ParseRequest>(&raw).map_err(|e| e.to_string())
 }

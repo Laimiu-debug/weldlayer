@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "WeldLayer",
+  "version": "0.1.0",
+  "identifier": "com.laimiu.weldlayer",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "WeldLayer",
+        "width": 1280,
+        "height": 800
+      }
+    ]
+  }
+}

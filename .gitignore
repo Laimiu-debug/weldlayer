@@ -4,6 +4,8 @@ Thumbs.db
 # Rust
 /target/
 **/*.rs.bk
+apps/desktop-tauri/src-tauri/target/
+apps/desktop-tauri/src-tauri/gen/
 
 # Node
 node_modules/

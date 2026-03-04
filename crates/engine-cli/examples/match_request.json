@@ -1,0 +1,90 @@
+{
+  "trace_id": "",
+  "project_id": "PRJ-CLI-001",
+  "standard_code": "asme_ix",
+  "inventory_policy": "warn",
+  "top_k": 3,
+  "weld_seams": [
+    {
+      "weld_id": "W-001",
+      "material_group_a": "P-No.1",
+      "material_group_b": "P-No.1",
+      "thickness_a_mm": 12.0,
+      "thickness_b_mm": 12.0,
+      "position_code": "2G",
+      "process_hint": "GTAW",
+      "review_status": "confirmed"
+    },
+    {
+      "weld_id": "W-002",
+      "material_group_a": "P-No.1",
+      "material_group_b": "P-No.8",
+      "thickness_a_mm": 20.0,
+      "thickness_b_mm": 14.0,
+      "position_code": "5G",
+      "process_hint": "GTAW",
+      "review_status": "changed"
+    }
+  ],
+  "pqr_candidates": [
+    {
+      "pqr_id": "PQR-102",
+      "standard_code": "asme_ix",
+      "process_code": "GTAW",
+      "material_group_scope": ["P-No.1", "P-No.8"],
+      "thickness_min_mm": 3.0,
+      "thickness_max_mm": 45.0,
+      "position_scope": ["2G", "5G"],
+      "dissimilar_support": true,
+      "thickness_mismatch_support": true,
+      "thickness_delta_max_mm": 10.0,
+      "valid_to": "2027-01-20",
+      "status": "active"
+    }
+  ],
+  "welder_candidates": [
+    {
+      "welder_id": "WELDER-018",
+      "cert_no": "CERT-7782",
+      "standard_code": "asme_ix",
+      "process_code": "GTAW",
+      "material_group_scope": ["P-No.1", "P-No.8"],
+      "position_scope": ["2G", "5G", "6G"],
+      "dissimilar_qualified": true,
+      "thickness_mismatch_qualified": true,
+      "thickness_delta_max_mm": 10.0,
+      "expiry_date": "2026-12-31",
+      "status": "active"
+    }
+  ],
+  "required_consumables": [
+    {
+      "material_code": "ER70S-6",
+      "required_qty": 8.0
+    },
+    {
+      "material_code": "ER308L",
+      "required_qty": 5.0
+    }
+  ],
+  "consumable_batches": [
+    {
+      "batch_no": "B-001",
+      "material_code": "ER70S-6",
+      "spec_standard": "AWS A5.18",
+      "qty_available": 12.0,
+      "safety_stock": 6.0,
+      "expiry_date": "2027-03-01",
+      "status": "active"
+    },
+    {
+      "batch_no": "B-002",
+      "material_code": "ER308L",
+      "spec_standard": "AWS A5.9",
+      "qty_available": 3.0,
+      "safety_stock": 4.0,
+      "expiry_date": "2026-06-15",
+      "status": "active"
+    }
+  ]
+}

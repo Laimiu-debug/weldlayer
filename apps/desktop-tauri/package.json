@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "description": "WeldLayer desktop shell placeholder",
   "scripts": {
-    "dev": "echo \"TODO: initialize tauri app\"",
-    "build": "echo \"TODO: initialize tauri app\""
+    "dev": "echo \"TODO: initialize frontend and run tauri dev\"",
+    "build": "echo \"TODO: initialize frontend and run tauri build\"",
+    "dev:tauri": "cargo run --manifest-path src-tauri/Cargo.toml",
+    "check:tauri": "cargo check --manifest-path src-tauri/Cargo.toml"
   }
 }

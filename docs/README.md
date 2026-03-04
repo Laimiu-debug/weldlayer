@@ -28,6 +28,7 @@
 17. `engineering/17-SQLite-Store-v0.md`
 18. `engineering/18-Engine-CLI-v0.md`
 19. `engineering/19-App-Service-v0.md`
+20. `engineering/20-Tauri-Command-Scaffold-v0.md`
 
 ## 说明
 

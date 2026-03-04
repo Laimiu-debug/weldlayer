@@ -32,7 +32,9 @@ WeldLayer 是一个面向焊接工程场景的桌面应用仓库，当前已包�
 cargo check
 cargo test -p core-engine
 cargo test -p core-store
-cargo run -p engine-cli -- weldlayer.db
+cargo test -p app-service
+cargo run -p engine-cli -- match weldlayer.db
+cargo run -p engine-cli -- parse
 ```
 
 ## 当前阶段

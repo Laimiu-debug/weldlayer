@@ -17,6 +17,8 @@
 ```bash
 cargo run -p engine-cli -- match weldlayer.db
 cargo run -p engine-cli -- parse
+cargo run -p engine-cli -- match weldlayer.db crates/engine-cli/examples/match_request.json
+cargo run -p engine-cli -- parse crates/engine-cli/examples/parse_request.json
 ```
 
 `match` 执行后会：
@@ -34,6 +36,6 @@ cargo run -p engine-cli -- parse
 
 ## 4. 后续
 
-- 支持从 JSON 文件读取请求（替代内置样例）
+- 支持更多 CLI 参数（规则包、策略、top_k）
 - 支持输出完整响应 JSON 文件
 - 增加 `strict` 模式切换参数
