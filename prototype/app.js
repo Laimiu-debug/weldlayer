@@ -284,6 +284,7 @@ function renderSeamTable() {
       <td>${statusTag(special.label, special.type)}</td>
       <td>${row.conf.toFixed(2)}</td>
       <td>${statusTag(row.status, stateType)}</td>
+      <td><button class="ghost" data-seam-delete="${idx}">Delete</button></td>
     `;
     seamBody.appendChild(tr);
   });
@@ -422,6 +423,14 @@ function getNextBatchNo() {
   return getNextSequenceId(
     appState.batchRows.map((row) => row.batch_no),
     "B",
+    3
+  );
+}
+
+function getNextSeamId() {
+  return getNextSequenceId(
+    appState.seamRows.map((row) => row.id),
+    "W",
     3
   );
 }
@@ -1550,6 +1559,25 @@ function initHandlers() {
   document.querySelector("#btn-parse").addEventListener("click", simulateParse);
   document.querySelector("#btn-retry-parse").addEventListener("click", () => appendLog("重试任务已入队"));
 
+  const addSeamBtn = document.querySelector("#btn-add-seam");
+  if (addSeamBtn) {
+    addSeamBtn.addEventListener("click", () => {
+      appState.seamRows.push({
+        id: getNextSeamId(),
+        matA: "P-No.1",
+        matB: "P-No.1",
+        thkA: 10,
+        thkB: 10,
+        pos: "1G",
+        symbol: "BW",
+        conf: 0.8,
+        status: "pending"
+      });
+      renderSeamTable();
+      addEvent("new seam row added");
+    });
+  }
+
   document.querySelector("#btn-confirm-all").addEventListener("click", () => {
     appState.seamRows = appState.seamRows.map((row) => ({ ...row, status: "confirmed" }));
     renderSeamTable();
@@ -1598,6 +1626,16 @@ function initHandlers() {
     },
     true
   );
+
+  seamBody.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-seam-delete]");
+    if (!btn) return;
+    const idx = Number(btn.dataset.seamDelete);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= appState.seamRows.length) return;
+    const [removed] = appState.seamRows.splice(idx, 1);
+    renderSeamTable();
+    addEvent(`seam removed: ${removed?.id || idx}`);
+  });
 
   document.querySelector("#btn-run-match").addEventListener("click", () => {
     runMatch();
