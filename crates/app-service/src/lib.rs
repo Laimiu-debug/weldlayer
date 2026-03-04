@@ -1,5 +1,6 @@
-use contracts::matching::MatchRequest;
-use contracts::matching::MatchResponse;
+use contracts::matching::{
+    ConsumableBatch, MatchRequest, MatchResponse, PqrCandidate, WelderCandidate,
+};
 use contracts::parser::ParseRequest;
 use contracts::parser::ParseResponse;
 use core_engine::run_match;
@@ -107,12 +108,105 @@ pub fn run_parse_via_sidecar(
     Ok(parsed)
 }
 
+pub fn upsert_pqr_profile(
+    db_path: &str,
+    project_id: &str,
+    pqr: &PqrCandidate,
+) -> Result<(), ServiceError> {
+    let store = Store::open(db_path)?;
+    store.upsert_pqr_profile(project_id, pqr)?;
+    Ok(())
+}
+
+pub fn list_pqr_profiles(
+    db_path: &str,
+    project_id: &str,
+    limit: usize,
+) -> Result<Vec<PqrCandidate>, ServiceError> {
+    let store = Store::open(db_path)?;
+    let rows = store.list_pqr_profiles(project_id, limit)?;
+    Ok(rows.into_iter().map(|row| row.pqr).collect())
+}
+
+pub fn delete_pqr_profile(
+    db_path: &str,
+    project_id: &str,
+    pqr_id: &str,
+) -> Result<bool, ServiceError> {
+    let store = Store::open(db_path)?;
+    store
+        .delete_pqr_profile(project_id, pqr_id)
+        .map_err(Into::into)
+}
+
+pub fn upsert_welder_profile(
+    db_path: &str,
+    project_id: &str,
+    welder: &WelderCandidate,
+) -> Result<(), ServiceError> {
+    let store = Store::open(db_path)?;
+    store.upsert_welder_profile(project_id, welder)?;
+    Ok(())
+}
+
+pub fn list_welder_profiles(
+    db_path: &str,
+    project_id: &str,
+    limit: usize,
+) -> Result<Vec<WelderCandidate>, ServiceError> {
+    let store = Store::open(db_path)?;
+    let rows = store.list_welder_profiles(project_id, limit)?;
+    Ok(rows.into_iter().map(|row| row.welder).collect())
+}
+
+pub fn delete_welder_profile(
+    db_path: &str,
+    project_id: &str,
+    welder_id: &str,
+) -> Result<bool, ServiceError> {
+    let store = Store::open(db_path)?;
+    store
+        .delete_welder_profile(project_id, welder_id)
+        .map_err(Into::into)
+}
+
+pub fn upsert_consumable_batch(
+    db_path: &str,
+    project_id: &str,
+    batch: &ConsumableBatch,
+) -> Result<(), ServiceError> {
+    let store = Store::open(db_path)?;
+    store.upsert_consumable_batch(project_id, batch)?;
+    Ok(())
+}
+
+pub fn list_consumable_batches(
+    db_path: &str,
+    project_id: &str,
+    limit: usize,
+) -> Result<Vec<ConsumableBatch>, ServiceError> {
+    let store = Store::open(db_path)?;
+    let rows = store.list_consumable_batches(project_id, limit)?;
+    Ok(rows.into_iter().map(|row| row.batch).collect())
+}
+
+pub fn delete_consumable_batch(
+    db_path: &str,
+    project_id: &str,
+    batch_no: &str,
+) -> Result<bool, ServiceError> {
+    let store = Store::open(db_path)?;
+    store
+        .delete_consumable_batch(project_id, batch_no)
+        .map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use contracts::matching::{
-        ConsumableBatch, InventoryPolicy, PqrCandidate, RequiredConsumable, ReviewStatus, StandardCode,
-        WelderCandidate, WeldSeam,
+        ConsumableBatch, InventoryPolicy, PqrCandidate, RequiredConsumable, ReviewStatus,
+        StandardCode, WeldSeam, WelderCandidate,
     };
 
     fn sample_request() -> MatchRequest {

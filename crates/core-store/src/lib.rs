@@ -1,5 +1,7 @@
-use contracts::matching::{MatchRequest, MatchResponse, StandardCode};
-use rusqlite::{params, Connection, OptionalExtension};
+use contracts::matching::{
+    ConsumableBatch, MatchRequest, MatchResponse, PqrCandidate, StandardCode, WelderCandidate,
+};
+use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -36,6 +38,27 @@ pub struct AuditLogRecord {
     pub result: String,
     pub payload_json: String,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PqrProfileRecord {
+    pub project_id: String,
+    pub pqr: PqrCandidate,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct WelderProfileRecord {
+    pub project_id: String,
+    pub welder: WelderCandidate,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConsumableBatchRecord {
+    pub project_id: String,
+    pub batch: ConsumableBatch,
+    pub updated_at: i64,
 }
 
 pub struct Store {
@@ -204,6 +227,199 @@ impl Store {
         Ok(rows)
     }
 
+    pub fn upsert_pqr_profile(
+        &self,
+        project_id: &str,
+        pqr: &PqrCandidate,
+    ) -> Result<(), StoreError> {
+        let updated_at = now_unix_ts();
+        let pqr_json = serde_json::to_string(pqr)?;
+        self.conn.execute(
+            r#"
+            INSERT INTO pqr_profiles (project_id, pqr_id, pqr_json, updated_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(project_id, pqr_id) DO UPDATE SET
+              pqr_json = excluded.pqr_json,
+              updated_at = excluded.updated_at
+            "#,
+            params![project_id, pqr.pqr_id, pqr_json, updated_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_pqr_profile(&self, project_id: &str, pqr_id: &str) -> Result<bool, StoreError> {
+        let affected = self.conn.execute(
+            r#"
+            DELETE FROM pqr_profiles
+            WHERE project_id = ?1 AND pqr_id = ?2
+            "#,
+            params![project_id, pqr_id],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn list_pqr_profiles(
+        &self,
+        project_id: &str,
+        limit: usize,
+    ) -> Result<Vec<PqrProfileRecord>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT project_id, pqr_json, updated_at
+            FROM pqr_profiles
+            WHERE project_id = ?1
+            ORDER BY updated_at DESC
+            LIMIT ?2
+            "#,
+        )?;
+
+        let rows = stmt
+            .query_map(params![project_id, limit as i64], |row| {
+                let pqr_json: String = row.get(1)?;
+                let pqr: PqrCandidate = serde_json::from_str(&pqr_json).map_err(map_json_err)?;
+                Ok(PqrProfileRecord {
+                    project_id: row.get(0)?,
+                    pqr,
+                    updated_at: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    pub fn upsert_welder_profile(
+        &self,
+        project_id: &str,
+        welder: &WelderCandidate,
+    ) -> Result<(), StoreError> {
+        let updated_at = now_unix_ts();
+        let welder_json = serde_json::to_string(welder)?;
+        self.conn.execute(
+            r#"
+            INSERT INTO welder_profiles (project_id, welder_id, welder_json, updated_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(project_id, welder_id) DO UPDATE SET
+              welder_json = excluded.welder_json,
+              updated_at = excluded.updated_at
+            "#,
+            params![project_id, welder.welder_id, welder_json, updated_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_welder_profile(
+        &self,
+        project_id: &str,
+        welder_id: &str,
+    ) -> Result<bool, StoreError> {
+        let affected = self.conn.execute(
+            r#"
+            DELETE FROM welder_profiles
+            WHERE project_id = ?1 AND welder_id = ?2
+            "#,
+            params![project_id, welder_id],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn list_welder_profiles(
+        &self,
+        project_id: &str,
+        limit: usize,
+    ) -> Result<Vec<WelderProfileRecord>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT project_id, welder_json, updated_at
+            FROM welder_profiles
+            WHERE project_id = ?1
+            ORDER BY updated_at DESC
+            LIMIT ?2
+            "#,
+        )?;
+
+        let rows = stmt
+            .query_map(params![project_id, limit as i64], |row| {
+                let welder_json: String = row.get(1)?;
+                let welder: WelderCandidate =
+                    serde_json::from_str(&welder_json).map_err(map_json_err)?;
+                Ok(WelderProfileRecord {
+                    project_id: row.get(0)?,
+                    welder,
+                    updated_at: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    pub fn upsert_consumable_batch(
+        &self,
+        project_id: &str,
+        batch: &ConsumableBatch,
+    ) -> Result<(), StoreError> {
+        let updated_at = now_unix_ts();
+        let batch_json = serde_json::to_string(batch)?;
+        self.conn.execute(
+            r#"
+            INSERT INTO consumable_batches (project_id, batch_no, batch_json, updated_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(project_id, batch_no) DO UPDATE SET
+              batch_json = excluded.batch_json,
+              updated_at = excluded.updated_at
+            "#,
+            params![project_id, batch.batch_no, batch_json, updated_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_consumable_batch(
+        &self,
+        project_id: &str,
+        batch_no: &str,
+    ) -> Result<bool, StoreError> {
+        let affected = self.conn.execute(
+            r#"
+            DELETE FROM consumable_batches
+            WHERE project_id = ?1 AND batch_no = ?2
+            "#,
+            params![project_id, batch_no],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn list_consumable_batches(
+        &self,
+        project_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ConsumableBatchRecord>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT project_id, batch_json, updated_at
+            FROM consumable_batches
+            WHERE project_id = ?1
+            ORDER BY updated_at DESC
+            LIMIT ?2
+            "#,
+        )?;
+
+        let rows = stmt
+            .query_map(params![project_id, limit as i64], |row| {
+                let batch_json: String = row.get(1)?;
+                let batch: ConsumableBatch =
+                    serde_json::from_str(&batch_json).map_err(map_json_err)?;
+                Ok(ConsumableBatchRecord {
+                    project_id: row.get(0)?,
+                    batch,
+                    updated_at: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
     fn migrate(&self) -> Result<(), StoreError> {
         self.conn.execute_batch(
             r#"
@@ -240,6 +456,39 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS idx_audit_logs_trace_id ON audit_logs(trace_id);
             CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS pqr_profiles (
+              project_id TEXT NOT NULL,
+              pqr_id TEXT NOT NULL,
+              pqr_json TEXT NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY(project_id, pqr_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pqr_profiles_project_id ON pqr_profiles(project_id);
+            CREATE INDEX IF NOT EXISTS idx_pqr_profiles_updated_at ON pqr_profiles(updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS welder_profiles (
+              project_id TEXT NOT NULL,
+              welder_id TEXT NOT NULL,
+              welder_json TEXT NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY(project_id, welder_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_welder_profiles_project_id ON welder_profiles(project_id);
+            CREATE INDEX IF NOT EXISTS idx_welder_profiles_updated_at ON welder_profiles(updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS consumable_batches (
+              project_id TEXT NOT NULL,
+              batch_no TEXT NOT NULL,
+              batch_json TEXT NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY(project_id, batch_no)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_consumable_batches_project_id ON consumable_batches(project_id);
+            CREATE INDEX IF NOT EXISTS idx_consumable_batches_updated_at ON consumable_batches(updated_at DESC);
             "#,
         )?;
         Ok(())
@@ -255,19 +504,15 @@ fn now_unix_ts() -> i64 {
 }
 
 fn map_json_err(err: serde_json::Error) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        0,
-        rusqlite::types::Type::Text,
-        Box::new(err),
-    )
+    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use contracts::matching::{
-        Decision, InventoryPolicy, MatchRequest, MatchResponse, PqrCandidate, RequiredConsumable, ReviewStatus,
-        RulePackageRef, StandardCode, WelderCandidate, WeldSeam,
+        Decision, InventoryPolicy, MatchRequest, MatchResponse, PqrCandidate, RequiredConsumable,
+        ReviewStatus, RulePackageRef, StandardCode, WeldSeam, WelderCandidate,
     };
 
     fn sample_request() -> MatchRequest {
@@ -337,6 +582,51 @@ mod tests {
         }
     }
 
+    fn sample_pqr() -> PqrCandidate {
+        PqrCandidate {
+            pqr_id: "PQR-101".to_string(),
+            standard_code: StandardCode::AsmeIx,
+            process_code: "GTAW".to_string(),
+            material_group_scope: vec!["P-No.1".to_string()],
+            thickness_min_mm: 3.0,
+            thickness_max_mm: 40.0,
+            position_scope: vec!["2G".to_string()],
+            dissimilar_support: true,
+            thickness_mismatch_support: true,
+            thickness_delta_max_mm: 12.0,
+            valid_to: "2028-12-31".to_string(),
+            status: "active".to_string(),
+        }
+    }
+
+    fn sample_welder() -> WelderCandidate {
+        WelderCandidate {
+            welder_id: "WELDER-101".to_string(),
+            cert_no: "CERT-9001".to_string(),
+            standard_code: StandardCode::AsmeIx,
+            process_code: "GTAW".to_string(),
+            material_group_scope: vec!["P-No.1".to_string()],
+            position_scope: vec!["2G".to_string(), "5G".to_string()],
+            dissimilar_qualified: true,
+            thickness_mismatch_qualified: true,
+            thickness_delta_max_mm: 10.0,
+            expiry_date: "2028-12-31".to_string(),
+            status: "active".to_string(),
+        }
+    }
+
+    fn sample_batch() -> contracts::matching::ConsumableBatch {
+        contracts::matching::ConsumableBatch {
+            batch_no: "BATCH-101".to_string(),
+            material_code: "ER70S-6".to_string(),
+            spec_standard: "AWS A5.18".to_string(),
+            qty_available: 20.0,
+            safety_stock: 5.0,
+            expiry_date: "2028-12-31".to_string(),
+            status: "active".to_string(),
+        }
+    }
+
     #[test]
     fn can_upsert_and_read_project() {
         let store = Store::open_in_memory().expect("open in-memory db");
@@ -364,7 +654,12 @@ mod tests {
             .insert_match_report(&req, &res)
             .expect("insert match report");
         store
-            .insert_audit_log(&res.trace_id, "run_match", "partial", "{\"reason\":\"warn inventory\"}")
+            .insert_audit_log(
+                &res.trace_id,
+                "run_match",
+                "partial",
+                "{\"reason\":\"warn inventory\"}",
+            )
             .expect("insert audit log");
 
         let reports = store.list_match_reports(10).expect("list reports");
@@ -375,5 +670,74 @@ mod tests {
         assert_eq!(reports[0].decision, "partial");
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].action, "run_match");
+    }
+
+    #[test]
+    fn can_upsert_list_and_delete_master_data_records() {
+        let store = Store::open_in_memory().expect("open in-memory db");
+        let project_id = "PRJ-MASTER-001";
+
+        store
+            .upsert_pqr_profile(project_id, &sample_pqr())
+            .expect("upsert pqr");
+        store
+            .upsert_welder_profile(project_id, &sample_welder())
+            .expect("upsert welder");
+        store
+            .upsert_consumable_batch(project_id, &sample_batch())
+            .expect("upsert batch");
+
+        let pqrs = store.list_pqr_profiles(project_id, 10).expect("list pqr");
+        let welders = store
+            .list_welder_profiles(project_id, 10)
+            .expect("list welder");
+        let batches = store
+            .list_consumable_batches(project_id, 10)
+            .expect("list batches");
+
+        assert_eq!(pqrs.len(), 1);
+        assert_eq!(pqrs[0].pqr.pqr_id, "PQR-101");
+        assert_eq!(welders.len(), 1);
+        assert_eq!(welders[0].welder.welder_id, "WELDER-101");
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].batch.batch_no, "BATCH-101");
+
+        assert!(
+            store
+                .delete_pqr_profile(project_id, "PQR-101")
+                .expect("delete pqr")
+        );
+        assert!(
+            store
+                .delete_welder_profile(project_id, "WELDER-101")
+                .expect("delete welder")
+        );
+        assert!(
+            store
+                .delete_consumable_batch(project_id, "BATCH-101")
+                .expect("delete batch")
+        );
+
+        assert_eq!(
+            store
+                .list_pqr_profiles(project_id, 10)
+                .expect("list pqr after delete")
+                .len(),
+            0
+        );
+        assert_eq!(
+            store
+                .list_welder_profiles(project_id, 10)
+                .expect("list welder after delete")
+                .len(),
+            0
+        );
+        assert_eq!(
+            store
+                .list_consumable_batches(project_id, 10)
+                .expect("list batch after delete")
+                .len(),
+            0
+        );
     }
 }
