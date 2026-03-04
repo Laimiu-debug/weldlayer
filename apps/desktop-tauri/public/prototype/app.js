@@ -429,7 +429,148 @@ function setStatusSnapshot() {
   document.querySelector("#status-license").textContent = appState.licenseStatus;
 }
 
-function runMatch() {
+function toStandardCode(code) {
+  return code === "CN_GB" ? "cn_gb" : "asme_ix";
+}
+
+function parseThicknessRange(rawRange) {
+  const [minRaw, maxRaw] = String(rawRange || "")
+    .split("-")
+    .map((item) => Number(item));
+  const min = Number.isFinite(minRaw) ? minRaw : 0;
+  const max = Number.isFinite(maxRaw) ? maxRaw : Math.max(200, min);
+  return { min, max };
+}
+
+function splitScope(raw, delimiter = "/") {
+  return String(raw || "")
+    .split(delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toReviewStatus(status) {
+  if (status === "confirmed") return "confirmed";
+  if (status === "changed") return "changed";
+  if (status === "uncertain") return "uncertain";
+  return "pending";
+}
+
+function buildMatchRequestPayload() {
+  const standardCode = toStandardCode(appState.standard);
+  return {
+    trace_id: appState.traceId,
+    project_id: "PRJ-PROTOTYPE-001",
+    standard_code: standardCode,
+    inventory_policy: "warn",
+    top_k: 3,
+    weld_seams: appState.seamRows.map((row) => ({
+      weld_id: row.id,
+      material_group_a: row.matA,
+      material_group_b: row.matB,
+      thickness_a_mm: Number(row.thkA),
+      thickness_b_mm: Number(row.thkB),
+      position_code: row.pos,
+      process_hint: "GTAW",
+      review_status: toReviewStatus(row.status)
+    })),
+    pqr_candidates: appState.pqrRows.map((row) => {
+      const range = parseThicknessRange(row.range);
+      return {
+        pqr_id: row.id,
+        standard_code: toStandardCode(row.standard),
+        process_code: String(row.process).split("+")[0],
+        material_group_scope: ["P-No.1", "P-No.8", "P-No.11"],
+        thickness_min_mm: range.min,
+        thickness_max_mm: range.max,
+        position_scope: splitScope(row.pos),
+        dissimilar_support: Boolean(row.dissimilar),
+        thickness_mismatch_support: Boolean(row.thicknessMismatch),
+        thickness_delta_max_mm: Number(row.maxDelta) || 0,
+        valid_to: row.valid,
+        status: row.status
+      };
+    }),
+    welder_candidates: appState.welderRows.map((row) => ({
+      welder_id: row.id,
+      cert_no: row.cert,
+      standard_code: standardCode,
+      process_code: String(row.process).split("+")[0],
+      material_group_scope: splitScope(row.group),
+      position_scope: splitScope(row.pos),
+      dissimilar_qualified: Boolean(row.dissimilarQualified),
+      thickness_mismatch_qualified: Boolean(row.thicknessMismatchQualified),
+      thickness_delta_max_mm: Number(row.thicknessDeltaMax) || 0,
+      expiry_date: row.exp,
+      status: row.status === "active" ? "active" : "inactive"
+    })),
+    required_consumables: [
+      { material_code: "ER70S-6", required_qty: 8.0 },
+      { material_code: "ER308L", required_qty: 5.0 }
+    ],
+    consumable_batches: [
+      {
+        batch_no: "B-001",
+        material_code: "ER70S-6",
+        spec_standard: "AWS A5.18",
+        qty_available: 12.0,
+        safety_stock: 6.0,
+        expiry_date: "2027-03-01",
+        status: "active"
+      },
+      {
+        batch_no: "B-002",
+        material_code: "ER308L",
+        spec_standard: "AWS A5.9",
+        qty_available: 3.0,
+        safety_stock: 4.0,
+        expiry_date: "2026-06-15",
+        status: "active"
+      }
+    ]
+  };
+}
+
+async function invokeTauriCommand(command, args) {
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  if (typeof invoke !== "function") {
+    throw new Error("tauri runtime invoke is unavailable");
+  }
+  return invoke(command, args);
+}
+
+function applyMatchResponse(response) {
+  const decision = String(response?.decision || "fail");
+  const recommended = response?.recommended || null;
+
+  document.querySelector("#decision-label").textContent = decision;
+  document.querySelector("#status-match").textContent = decision;
+  document.querySelector("#best-pqr").textContent = recommended?.pqr_id || "-";
+  document.querySelector("#best-welder").textContent = recommended?.welder_id || "-";
+  document.querySelector("#best-score").textContent = Number(recommended?.score?.final_score || 0).toFixed(2);
+
+  appState.alternatives = (response?.alternatives || []).map((item) => ({
+    pqr: item.pqr_id,
+    welder: item.welder_id,
+    score: Number(item?.score?.final_score || 0)
+  }));
+
+  appState.conflicts = (response?.hard_conflicts || []).map((item) => ({
+    entity: item.entity_type,
+    field: item.field_key,
+    actual: item.actual_value,
+    expected: item.expected_value,
+    clause: item.clause_ref,
+    severity: String(item.severity || "warning")
+  }));
+
+  renderAlternatives();
+  const activeSeverity = document.querySelector(".filter-btn.active")?.dataset?.severity || "all";
+  renderConflicts(activeSeverity);
+  setStatusSnapshot();
+}
+
+function runMatchFallback() {
   const score = 0.7 + Math.random() * 0.22;
   const pick = appState.alternatives[Math.floor(Math.random() * appState.alternatives.length)];
   document.querySelector("#best-pqr").textContent = pick.pqr;
@@ -438,7 +579,24 @@ function runMatch() {
   const decision = appState.conflicts.some((item) => item.severity === "error") ? "partial" : "match";
   document.querySelector("#decision-label").textContent = decision;
   document.querySelector("#status-match").textContent = decision;
-  addEvent(`匹配执行完成，推荐 ${pick.pqr} + ${pick.welder}`);
+  addEvent(`鍖归厤鎵ц瀹屾垚锛屾帹鑽?${pick.pqr} + ${pick.welder}`);
+}
+
+async function runMatch() {
+  try {
+    const requestPayload = buildMatchRequestPayload();
+    const responseJson = await invokeTauriCommand("run_match", {
+      dbPath: "weldlayer.db",
+      projectName: "Prototype UI Project",
+      requestJson: JSON.stringify(requestPayload)
+    });
+    const response = JSON.parse(responseJson);
+    applyMatchResponse(response);
+    addEvent(`backend match finished: ${response.trace_id || appState.traceId}`);
+  } catch (error) {
+    runMatchFallback();
+    addEvent(`backend match unavailable, fallback simulation used (${String(error)})`);
+  }
 }
 
 function addEvent(text) {

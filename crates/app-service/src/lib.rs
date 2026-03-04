@@ -47,6 +47,15 @@ pub fn run_match_and_persist(
     run_match_and_persist_with_store(&store, project_name, request)
 }
 
+pub fn run_match_and_persist_with_master_data(
+    db_path: &str,
+    project_name: &str,
+    request: &MatchRequest,
+) -> Result<MatchResponse, ServiceError> {
+    let store = Store::open(db_path)?;
+    run_match_and_persist_with_master_data_store(&store, project_name, request)
+}
+
 pub fn run_match_and_persist_with_store(
     store: &Store,
     project_name: &str,
@@ -62,6 +71,15 @@ pub fn run_match_and_persist_with_store(
         "{}",
     )?;
     Ok(response)
+}
+
+pub fn run_match_and_persist_with_master_data_store(
+    store: &Store,
+    project_name: &str,
+    request: &MatchRequest,
+) -> Result<MatchResponse, ServiceError> {
+    let hydrated_request = hydrate_request_with_master_data(store, request)?;
+    run_match_and_persist_with_store(store, project_name, &hydrated_request)
 }
 
 pub fn run_parse_via_sidecar(
@@ -106,6 +124,39 @@ pub fn run_parse_via_sidecar(
     }
 
     Ok(parsed)
+}
+
+fn hydrate_request_with_master_data(
+    store: &Store,
+    request: &MatchRequest,
+) -> Result<MatchRequest, ServiceError> {
+    let mut hydrated = request.clone();
+
+    if hydrated.pqr_candidates.is_empty() {
+        hydrated.pqr_candidates = store
+            .list_pqr_profiles(&hydrated.project_id, 1000)?
+            .into_iter()
+            .map(|row| row.pqr)
+            .collect();
+    }
+
+    if hydrated.welder_candidates.is_empty() {
+        hydrated.welder_candidates = store
+            .list_welder_profiles(&hydrated.project_id, 1000)?
+            .into_iter()
+            .map(|row| row.welder)
+            .collect();
+    }
+
+    if hydrated.consumable_batches.is_empty() {
+        hydrated.consumable_batches = store
+            .list_consumable_batches(&hydrated.project_id, 1000)?
+            .into_iter()
+            .map(|row| row.batch)
+            .collect();
+    }
+
+    Ok(hydrated)
 }
 
 pub fn upsert_pqr_profile(
@@ -284,5 +335,70 @@ mod tests {
         assert_eq!(project.project_name, "Service Test");
         assert_eq!(store.list_match_reports(10).expect("list reports").len(), 1);
         assert_eq!(store.list_audit_logs(10).expect("list logs").len(), 1);
+    }
+
+    #[test]
+    fn run_match_hydrates_master_data_when_request_candidates_are_empty() {
+        let store = Store::open_in_memory().expect("open memory db");
+
+        let pqr = PqrCandidate {
+            pqr_id: "PQR-HYDRATE-1".to_string(),
+            standard_code: StandardCode::AsmeIx,
+            process_code: "GTAW".to_string(),
+            material_group_scope: vec!["P-No.1".to_string()],
+            thickness_min_mm: 3.0,
+            thickness_max_mm: 50.0,
+            position_scope: vec!["2G".to_string()],
+            dissimilar_support: true,
+            thickness_mismatch_support: true,
+            thickness_delta_max_mm: 20.0,
+            valid_to: "2029-01-01".to_string(),
+            status: "active".to_string(),
+        };
+        store
+            .upsert_pqr_profile("PRJ-SVC-001", &pqr)
+            .expect("upsert pqr profile");
+
+        let welder = WelderCandidate {
+            welder_id: "WELDER-HYDRATE-1".to_string(),
+            cert_no: "CERT-HYDRATE-1".to_string(),
+            standard_code: StandardCode::AsmeIx,
+            process_code: "GTAW".to_string(),
+            material_group_scope: vec!["P-No.1".to_string()],
+            position_scope: vec!["2G".to_string(), "5G".to_string()],
+            dissimilar_qualified: true,
+            thickness_mismatch_qualified: true,
+            thickness_delta_max_mm: 20.0,
+            expiry_date: "2029-01-01".to_string(),
+            status: "active".to_string(),
+        };
+        store
+            .upsert_welder_profile("PRJ-SVC-001", &welder)
+            .expect("upsert welder profile");
+
+        let batch = ConsumableBatch {
+            batch_no: "B-HYDRATE-1".to_string(),
+            material_code: "ER70S-6".to_string(),
+            spec_standard: "AWS A5.18".to_string(),
+            qty_available: 20.0,
+            safety_stock: 5.0,
+            expiry_date: "2029-01-01".to_string(),
+            status: "active".to_string(),
+        };
+        store
+            .upsert_consumable_batch("PRJ-SVC-001", &batch)
+            .expect("upsert batch");
+
+        let mut request = sample_request();
+        request.pqr_candidates.clear();
+        request.welder_candidates.clear();
+        request.consumable_batches.clear();
+
+        let response =
+            run_match_and_persist_with_master_data_store(&store, "Hydrate Test", &request)
+                .expect("match should hydrate master data");
+
+        assert!(response.recommended.is_some());
+        assert_eq!(store.list_match_reports(10).expect("list reports").len(), 1);
     }
 }

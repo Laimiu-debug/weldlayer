@@ -1,7 +1,8 @@
 use app_service::{
     SidecarConfig, delete_consumable_batch, delete_pqr_profile, delete_welder_profile,
-    list_consumable_batches, list_pqr_profiles, list_welder_profiles, run_match_and_persist,
-    run_parse_via_sidecar, upsert_consumable_batch, upsert_pqr_profile, upsert_welder_profile,
+    list_consumable_batches, list_pqr_profiles, list_welder_profiles,
+    run_match_and_persist_with_master_data, run_parse_via_sidecar, upsert_consumable_batch,
+    upsert_pqr_profile, upsert_welder_profile,
 };
 use contracts::matching::{ConsumableBatch, MatchRequest, PqrCandidate, WelderCandidate};
 use contracts::parser::ParseRequest;
@@ -83,7 +84,7 @@ pub fn run_match(
 ) -> Result<String, String> {
     let request = serde_json::from_str::<MatchRequest>(&request_json)
         .map_err(|e| format!("invalid match request: {e}"))?;
-    let response = run_match_and_persist(&db_path, &project_name, &request)
+    let response = run_match_and_persist_with_master_data(&db_path, &project_name, &request)
         .map_err(|e| format!("match service failed: {e}"))?;
     serde_json::to_string(&response).map_err(|e| format!("serialize match response failed: {e}"))
 }
