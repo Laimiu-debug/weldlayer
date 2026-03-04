@@ -134,10 +134,16 @@ const appState = {
       severity: "warning"
     }
   ],
+  inventoryAlerts: [],
   parseProgress: 0,
   templateVersion: [1, 0, 0],
   traceId: "TRC-20260304-00017",
   licenseStatus: "NotActivated",
+  masterDirty: {
+    pqr: false,
+    welder: false,
+    batch: false
+  },
   pqrFilter: {
     dissimilarOnly: false,
     thicknessOnly: false,
@@ -223,6 +229,7 @@ const pqrBody = document.querySelector("#pqr-body");
 const welderBody = document.querySelector("#welder-body");
 const batchBody = document.querySelector("#batch-body");
 const altList = document.querySelector("#alt-list");
+const inventoryAlertList = document.querySelector("#inventory-alert-list");
 const conflictBody = document.querySelector("#conflict-body");
 const columnFilterPopover = document.querySelector("#column-filter-popover");
 const columnFilterTitle = document.querySelector("#column-filter-title");
@@ -460,6 +467,71 @@ function ensureMasterToolbarButtons(viewKey, prefix, addLabel) {
   };
 }
 
+function normalizeTextInput(rawValue, allowEmpty = false) {
+  const value = String(rawValue || "").trim();
+  if (!allowEmpty && !value) {
+    return { ok: false, value: "", reason: "empty" };
+  }
+  return { ok: true, value, reason: "" };
+}
+
+function normalizeNumberInput(rawValue, min = 0) {
+  const value = Number(String(rawValue || "").trim());
+  if (!Number.isFinite(value) || value < min) {
+    return { ok: false, value: 0, reason: "number" };
+  }
+  return { ok: true, value, reason: "" };
+}
+
+function normalizeDateInput(rawValue, allowEmpty = true) {
+  const value = String(rawValue || "").trim();
+  if (!value) {
+    return allowEmpty ? { ok: true, value: "", reason: "" } : { ok: false, value: "", reason: "date_empty" };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return { ok: false, value: "", reason: "date_format" };
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    return { ok: false, value: "", reason: "date_invalid" };
+  }
+  return { ok: true, value, reason: "" };
+}
+
+function normalizeThicknessRangeInput(rawValue) {
+  const text = String(rawValue || "").trim();
+  const matched = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*-\s*([0-9]+(?:\.[0-9]+)?)$/);
+  if (!matched) {
+    return { ok: false, value: "", reason: "range_format" };
+  }
+  const min = Number(matched[1]);
+  const max = Number(matched[2]);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min < 0 || max < 0 || min > max) {
+    return { ok: false, value: "", reason: "range_value" };
+  }
+  const minText = Number.isInteger(min) ? String(min) : String(min);
+  const maxText = Number.isInteger(max) ? String(max) : String(max);
+  return { ok: true, value: `${minText}-${maxText}`, reason: "" };
+}
+
+function syncMasterToolbarState() {
+  const set = (syncSelector, loadSelector, dirty) => {
+    const syncBtn = document.querySelector(syncSelector);
+    if (syncBtn) syncBtn.textContent = dirty ? "Sync to Backend *" : "Sync to Backend";
+    const loadBtn = document.querySelector(loadSelector);
+    if (loadBtn) loadBtn.textContent = dirty ? "Load from Backend (discard local)" : "Load from Backend";
+  };
+  set("#btn-pqr-sync", "#btn-pqr-load", appState.masterDirty.pqr);
+  set("#btn-welder-sync", "#btn-welder-load", appState.masterDirty.welder);
+  set("#btn-batch-sync", "#btn-batch-load", appState.masterDirty.batch);
+}
+
+function setMasterDirty(scope, dirty = true) {
+  if (!Object.prototype.hasOwnProperty.call(appState.masterDirty, scope)) return;
+  appState.masterDirty[scope] = Boolean(dirty);
+  syncMasterToolbarState();
+}
+
 function renderBatch() {
   if (!batchBody) return;
   batchBody.innerHTML = appState.batchRows
@@ -484,6 +556,25 @@ function renderBatch() {
 function renderAlternatives() {
   altList.innerHTML = appState.alternatives
     .map((item, idx) => `<li>#${idx + 1} ${item.pqr} + ${item.welder} <strong>${item.score.toFixed(2)}</strong></li>`)
+    .join("");
+}
+
+function renderInventoryAlerts() {
+  if (!inventoryAlertList) return;
+  if (!appState.inventoryAlerts.length) {
+    inventoryAlertList.innerHTML = `<li><span>No inventory alerts</span>${statusTag("ok", "ok")}</li>`;
+    return;
+  }
+  inventoryAlertList.innerHTML = appState.inventoryAlerts
+    .map((item) => {
+      const severity = String(item.severity || "warning").toLowerCase();
+      const cls = severity === "error" ? "danger" : severity === "info" ? "ok" : "warn";
+      const batchNo = item.batchNo || "-";
+      return `<li><span>${item.materialCode} / ${batchNo} need ${item.requiredQty.toFixed(1)}, available ${item.availableQty.toFixed(1)}</span>${statusTag(
+        severity,
+        cls
+      )}</li>`;
+    })
     .join("");
 }
 
@@ -754,24 +845,31 @@ async function syncMasterDataToBackend() {
     localId: (row) => row.batch_no,
     toPayload: (row) => row
   });
+
+  setMasterDirty("pqr", false);
+  setMasterDirty("welder", false);
+  setMasterDirty("batch", false);
 }
 
 async function reloadPqrRowsFromBackend() {
   const rows = await listCommandItems("list_pqrs");
   appState.pqrRows = rows.map((item) => pqrCandidateToRow(item));
   renderPqr();
+  setMasterDirty("pqr", false);
 }
 
 async function reloadWelderRowsFromBackend() {
   const rows = await listCommandItems("list_welders");
   appState.welderRows = rows.map((item) => welderCandidateToRow(item));
   renderWelder();
+  setMasterDirty("welder", false);
 }
 
 async function reloadBatchRowsFromBackend() {
   const rows = await listCommandItems("list_batches");
   appState.batchRows = rows.map((item) => normalizeBatchRow(item));
   renderBatch();
+  setMasterDirty("batch", false);
 }
 
 async function bootstrapMasterDataFromBackend() {
@@ -819,7 +917,19 @@ function applyMatchResponse(response) {
     severity: String(item.severity || "warning")
   }));
 
+  appState.inventoryAlerts = (response?.inventory_alerts || []).map((item) => ({
+    materialCode: String(item.material_code || ""),
+    batchNo: String(item.batch_no || ""),
+    requiredQty: Number(item.required_qty || 0),
+    availableQty: Number(item.available_qty || 0),
+    expiryDate: String(item.expiry_date || ""),
+    clauseRef: String(item.clause_ref || ""),
+    severity: String(item.severity || "warning"),
+    suggestion: String(item.suggestion || "")
+  }));
+
   renderAlternatives();
+  renderInventoryAlerts();
   const activeSeverity = document.querySelector(".filter-btn.active")?.dataset?.severity || "all";
   renderConflicts(activeSeverity);
   setStatusSnapshot();
@@ -834,7 +944,9 @@ function runMatchFallback() {
   const decision = appState.conflicts.some((item) => item.severity === "error") ? "partial" : "match";
   document.querySelector("#decision-label").textContent = decision;
   document.querySelector("#status-match").textContent = decision;
-  addEvent(`鍖归厤鎵ц瀹屾垚锛屾帹鑽?${pick.pqr} + ${pick.welder}`);
+  appState.inventoryAlerts = [];
+  renderInventoryAlerts();
+  addEvent(`fallback simulation used: ${pick.pqr} + ${pick.welder}`);
 }
 
 async function runMatch() {
@@ -1007,6 +1119,7 @@ function initHandlers() {
         status: "active"
       });
       renderPqr();
+      setMasterDirty("pqr", true);
       addEvent("new pqr row added");
     });
   }
@@ -1023,6 +1136,7 @@ function initHandlers() {
           localId: (row) => row.id,
           toPayload: (row) => pqrRowToCandidate(row)
         });
+        setMasterDirty("pqr", false);
         addEvent("pqr rows synced to backend");
       } catch (error) {
         addEvent(`pqr sync failed: ${String(error)}`);
@@ -1052,17 +1166,49 @@ function initHandlers() {
         if (!row) return;
         const value = target.textContent.trim();
 
-        if (field === "maxDelta") {
-          const parsed = Number(value);
-          if (!Number.isFinite(parsed) || parsed < 0) {
+        if (field === "standard") {
+          const normalized = normalizeTextInput(String(value || "").toUpperCase().replace(/\s+/g, "_"));
+          if (!normalized.ok || (normalized.value !== "ASME_IX" && normalized.value !== "CN_GB")) {
             renderPqr();
+            addEvent(`pqr ${row.id} rejected: standard must be ASME_IX or CN_GB`);
             return;
           }
-          row[field] = parsed;
+          row[field] = normalized.value;
+        } else if (field === "range") {
+          const normalized = normalizeThicknessRangeInput(value);
+          if (!normalized.ok) {
+            renderPqr();
+            addEvent(`pqr ${row.id} rejected: range must be min-max`);
+            return;
+          }
+          row[field] = normalized.value;
+        } else if (field === "maxDelta") {
+          const normalized = normalizeNumberInput(value, 0);
+          if (!normalized.ok) {
+            renderPqr();
+            addEvent(`pqr ${row.id} rejected: maxDelta must be >= 0`);
+            return;
+          }
+          row[field] = normalized.value;
+        } else if (field === "valid") {
+          const normalized = normalizeDateInput(value, true);
+          if (!normalized.ok) {
+            renderPqr();
+            addEvent(`pqr ${row.id} rejected: valid date must be YYYY-MM-DD`);
+            return;
+          }
+          row[field] = normalized.value;
         } else {
-          row[field] = value;
+          const normalized = normalizeTextInput(value);
+          if (!normalized.ok) {
+            renderPqr();
+            addEvent(`pqr ${row.id} rejected: ${field} cannot be empty`);
+            return;
+          }
+          row[field] = normalized.value;
         }
         renderPqr();
+        setMasterDirty("pqr", true);
         addEvent(`pqr ${row.id} updated: ${field}`);
       },
       true
@@ -1080,6 +1226,7 @@ function initHandlers() {
           row[field] = !row[field];
         }
         renderPqr();
+        setMasterDirty("pqr", true);
         addEvent(`pqr ${row.id} toggled: ${field}`);
         return;
       }
@@ -1091,6 +1238,7 @@ function initHandlers() {
       if (idx < 0) return;
       const [removed] = appState.pqrRows.splice(idx, 1);
       renderPqr();
+      setMasterDirty("pqr", true);
       addEvent(`pqr removed: ${removed?.id || rowId}`);
     });
   }
@@ -1111,6 +1259,7 @@ function initHandlers() {
         status: "active"
       });
       renderWelder();
+      setMasterDirty("welder", true);
       addEvent("new welder row added");
     });
   }
@@ -1127,6 +1276,7 @@ function initHandlers() {
           localId: (row) => row.id,
           toPayload: (row) => welderRowToCandidate(row)
         });
+        setMasterDirty("welder", false);
         addEvent("welder rows synced to backend");
       } catch (error) {
         addEvent(`welder sync failed: ${String(error)}`);
@@ -1157,16 +1307,32 @@ function initHandlers() {
         const value = target.textContent.trim();
 
         if (field === "thicknessDeltaMax") {
-          const parsed = Number(value);
-          if (!Number.isFinite(parsed) || parsed < 0) {
+          const normalized = normalizeNumberInput(value, 0);
+          if (!normalized.ok) {
             renderWelder();
+            addEvent(`welder ${row.id} rejected: thicknessDeltaMax must be >= 0`);
             return;
           }
-          row[field] = parsed;
+          row[field] = normalized.value;
+        } else if (field === "exp") {
+          const normalized = normalizeDateInput(value, true);
+          if (!normalized.ok) {
+            renderWelder();
+            addEvent(`welder ${row.id} rejected: expiry date must be YYYY-MM-DD`);
+            return;
+          }
+          row[field] = normalized.value;
         } else {
-          row[field] = value;
+          const normalized = normalizeTextInput(value);
+          if (!normalized.ok) {
+            renderWelder();
+            addEvent(`welder ${row.id} rejected: ${field} cannot be empty`);
+            return;
+          }
+          row[field] = normalized.value;
         }
         renderWelder();
+        setMasterDirty("welder", true);
         addEvent(`welder ${row.id} updated: ${field}`);
       },
       true
@@ -1184,6 +1350,7 @@ function initHandlers() {
           row[field] = !row[field];
         }
         renderWelder();
+        setMasterDirty("welder", true);
         addEvent(`welder ${row.id} toggled: ${field}`);
         return;
       }
@@ -1195,6 +1362,7 @@ function initHandlers() {
       if (idx < 0) return;
       const [removed] = appState.welderRows.splice(idx, 1);
       renderWelder();
+      setMasterDirty("welder", true);
       addEvent(`welder removed: ${removed?.id || rowId}`);
     });
   }
@@ -1214,6 +1382,7 @@ function initHandlers() {
         })
       );
       renderBatch();
+      setMasterDirty("batch", true);
       addEvent("new batch row added");
     });
   }
@@ -1232,16 +1401,32 @@ function initHandlers() {
         const value = target.textContent.trim();
 
         if (field === "qty_available" || field === "safety_stock") {
-          const parsed = Number(value);
-          if (!Number.isFinite(parsed) || parsed < 0) {
+          const normalized = normalizeNumberInput(value, 0);
+          if (!normalized.ok) {
             renderBatch();
+            addEvent(`batch ${row.batch_no} rejected: ${field} must be >= 0`);
             return;
           }
-          row[field] = parsed;
+          row[field] = normalized.value;
+        } else if (field === "expiry_date") {
+          const normalized = normalizeDateInput(value, true);
+          if (!normalized.ok) {
+            renderBatch();
+            addEvent(`batch ${row.batch_no} rejected: expiry date must be YYYY-MM-DD`);
+            return;
+          }
+          row[field] = normalized.value;
         } else {
-          row[field] = value;
+          const normalized = normalizeTextInput(value);
+          if (!normalized.ok) {
+            renderBatch();
+            addEvent(`batch ${row.batch_no} rejected: ${field} cannot be empty`);
+            return;
+          }
+          row[field] = normalized.value;
         }
         renderBatch();
+        setMasterDirty("batch", true);
         addEvent(`batch ${row.batch_no} updated: ${field}`);
       },
       true
@@ -1254,6 +1439,7 @@ function initHandlers() {
       if (!Number.isInteger(idx) || idx < 0 || idx >= appState.batchRows.length) return;
       const [removed] = appState.batchRows.splice(idx, 1);
       renderBatch();
+      setMasterDirty("batch", true);
       addEvent(`batch removed: ${removed?.batch_no || idx}`);
     });
   }
@@ -1272,6 +1458,7 @@ function initHandlers() {
           localId: (row) => row.batch_no,
           toPayload: (row) => normalizeBatchRow(row)
         });
+        setMasterDirty("batch", false);
         addEvent("batch rows synced to backend");
       } catch (error) {
         addEvent(`batch sync failed: ${String(error)}`);
@@ -1290,6 +1477,8 @@ function initHandlers() {
       }
     });
   }
+
+  syncMasterToolbarState();
 
   document.querySelector("#project-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1418,6 +1607,7 @@ function init() {
   renderWelder();
   renderBatch();
   renderAlternatives();
+  renderInventoryAlerts();
   renderConflicts("all");
   setStatusSnapshot();
   initHandlers();
