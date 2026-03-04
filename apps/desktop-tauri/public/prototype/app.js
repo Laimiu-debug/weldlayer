@@ -1,0 +1,712 @@
+const THICKNESS_DIFF_THRESHOLD = 3;
+
+const appState = {
+  view: "project",
+  standard: "ASME_IX",
+  seamRows: [
+    { id: "W-001", matA: "P-No.1", matB: "P-No.1", thkA: 16, thkB: 16, pos: "2G", symbol: "BW", conf: 0.92, status: "confirmed" },
+    { id: "W-002", matA: "P-No.1", matB: "P-No.8", thkA: 38, thkB: 25, pos: "5G", symbol: "BW", conf: 0.65, status: "pending" },
+    { id: "W-003", matA: "P-No.8", matB: "P-No.8", thkA: 9, thkB: 9, pos: "1G", symbol: "FW", conf: 0.88, status: "confirmed" },
+    { id: "W-004", matA: "P-No.1", matB: "P-No.1", thkA: 22, thkB: 14, pos: "6G", symbol: "BW", conf: 0.58, status: "pending" },
+    { id: "W-005", matA: "P-No.11", matB: "P-No.11", thkA: 12, thkB: 12, pos: "2F", symbol: "FW", conf: 0.81, status: "confirmed" },
+    { id: "W-006", matA: "P-No.1", matB: "P-No.11", thkA: 45, thkB: 28, pos: "5G", symbol: "BW", conf: 0.54, status: "pending" }
+  ],
+  pqrRows: [
+    {
+      id: "PQR-102",
+      standard: "ASME_IX",
+      process: "GTAW+SMAW",
+      range: "3-45",
+      pos: "1G/2G/5G",
+      dissimilar: true,
+      thicknessMismatch: true,
+      maxDelta: 20,
+      valid: "2027-01-20",
+      status: "active"
+    },
+    {
+      id: "PQR-118",
+      standard: "ASME_IX",
+      process: "SMAW",
+      range: "6-25",
+      pos: "1G/2G",
+      dissimilar: false,
+      thicknessMismatch: true,
+      maxDelta: 10,
+      valid: "2026-09-12",
+      status: "active"
+    },
+    {
+      id: "PQR-203",
+      standard: "CN_GB",
+      process: "MAG",
+      range: "4-32",
+      pos: "PA/PB/PC",
+      dissimilar: true,
+      thicknessMismatch: false,
+      maxDelta: 3,
+      valid: "2026-11-02",
+      status: "active"
+    }
+  ],
+  welderRows: [
+    {
+      id: "W-018",
+      cert: "CERT-7782",
+      process: "GTAW+SMAW",
+      pos: "1G/2G/5G/6G",
+      group: "P-No.1/P-No.8",
+      dissimilarQualified: true,
+      thicknessMismatchQualified: true,
+      thicknessDeltaMax: 18,
+      exp: "2026-12-31",
+      status: "active"
+    },
+    {
+      id: "W-021",
+      cert: "CERT-7810",
+      process: "SMAW",
+      pos: "1G/2G",
+      group: "P-No.1",
+      dissimilarQualified: false,
+      thicknessMismatchQualified: true,
+      thicknessDeltaMax: 8,
+      exp: "2026-07-11",
+      status: "warning"
+    },
+    {
+      id: "W-042",
+      cert: "CERT-7933",
+      process: "MAG",
+      pos: "PA/PB",
+      group: "P-No.8/P-No.11",
+      dissimilarQualified: true,
+      thicknessMismatchQualified: false,
+      thicknessDeltaMax: 3,
+      exp: "2027-03-05",
+      status: "active"
+    }
+  ],
+  alternatives: [
+    { pqr: "PQR-118", welder: "W-021", score: 0.72 },
+    { pqr: "PQR-102", welder: "W-042", score: 0.69 },
+    { pqr: "PQR-203", welder: "W-018", score: 0.64 }
+  ],
+  conflicts: [
+    {
+      entity: "pqr",
+      field: "thickness_mm",
+      actual: "38",
+      expected: "<=25",
+      clause: "ASME_IX:QW-452.1(b)",
+      severity: "error"
+    },
+    {
+      entity: "welder",
+      field: "expiry_date",
+      actual: "2026-07-11",
+      expected: "> 2026-08-01",
+      clause: "ASME_IX:QW-322",
+      severity: "warning"
+    }
+  ],
+  parseProgress: 0,
+  templateVersion: [1, 0, 0],
+  traceId: "TRC-20260304-00017",
+  licenseStatus: "NotActivated",
+  pqrFilter: {
+    dissimilarOnly: false,
+    thicknessOnly: false,
+    sortCol: "valid",
+    sortDir: "asc"
+  },
+  welderFilter: {
+    dissimilarOnly: false,
+    thicknessOnly: false,
+    sortCol: "exp",
+    sortDir: "asc"
+  }
+};
+
+const viewMeta = {
+  project: {
+    title: "焊接工艺匹配工作台",
+    breadcrumb: "项目中心 / 项目首页",
+    detailTitle: "项目摘要",
+    detailText: "当前视图展示端到端流程入口。建议进入图纸导入页开始解析。"
+  },
+  import: {
+    title: "图纸导入与解析",
+    breadcrumb: "项目中心 / 图纸导入解析",
+    detailTitle: "解析任务",
+    detailText: "导入 PDF/DWG，输出焊缝信息初稿与解析日志。"
+  },
+  seam: {
+    title: "焊缝信息确认",
+    breadcrumb: "项目中心 / 焊缝信息确认",
+    detailTitle: "人工复核",
+    detailText: "重点复核异种金属与不同厚度两类特殊工况。"
+  },
+  pqr: {
+    title: "PQR 主数据管理",
+    breadcrumb: "资源库 / PQR 管理",
+    detailTitle: "PQR 库",
+    detailText: "列头右侧支持符号化排序与筛选浮层。"
+  },
+  welder: {
+    title: "焊工资格管理",
+    breadcrumb: "资源库 / 焊工资格管理",
+    detailTitle: "焊工资格库",
+    detailText: "列头右侧支持符号化排序与筛选浮层。"
+  },
+  match: {
+    title: "匹配结果与冲突解释",
+    breadcrumb: "项目中心 / 匹配与冲突解释",
+    detailTitle: "规则执行结果",
+    detailText: "展示推荐方案与字段级条款冲突。"
+  },
+  template: {
+    title: "工艺卡模板映射",
+    breadcrumb: "资源库 / 模板映射",
+    detailTitle: "模板版本",
+    detailText: "模板映射支持版本化保存。"
+  },
+  export: {
+    title: "工艺卡预览与导出",
+    breadcrumb: "输出中心 / 工艺卡预览导出",
+    detailTitle: "导出检查",
+    detailText: "导出前完成完整性检查。"
+  },
+  license: {
+    title: "许可证中心",
+    breadcrumb: "系统中心 / 许可证",
+    detailTitle: "授权管理",
+    detailText: "支持在线激活与离线许可证导入。"
+  }
+};
+
+const menuButtons = [...document.querySelectorAll(".menu-item")];
+const views = [...document.querySelectorAll(".view")];
+const seamBody = document.querySelector("#seam-table tbody");
+const pqrBody = document.querySelector("#pqr-body");
+const welderBody = document.querySelector("#welder-body");
+const altList = document.querySelector("#alt-list");
+const conflictBody = document.querySelector("#conflict-body");
+const columnFilterPopover = document.querySelector("#column-filter-popover");
+const columnFilterTitle = document.querySelector("#column-filter-title");
+const columnFilterBody = document.querySelector("#column-filter-body");
+const columnFilterResetBtn = document.querySelector("#column-filter-reset");
+const columnFilterOkBtn = document.querySelector("#column-filter-ok");
+
+const uiState = {
+  activeFilterContext: null
+};
+
+function statusTag(text, type) {
+  return `<span class="tag ${type}">${text}</span>`;
+}
+
+function getSpecialCase(row) {
+  const dissimilar = row.matA !== row.matB;
+  const thicknessMismatch = Math.abs(Number(row.thkA) - Number(row.thkB)) > THICKNESS_DIFF_THRESHOLD;
+  if (dissimilar && thicknessMismatch) return { key: "both", label: "异种+不同厚度", type: "danger" };
+  if (dissimilar) return { key: "dissimilar", label: "异种金属", type: "warn" };
+  if (thicknessMismatch) return { key: "thickness", label: "不同厚度", type: "warn" };
+  return { key: "normal", label: "常规", type: "ok" };
+}
+
+function renderSpecialSummary() {
+  const count = { dissimilar: 0, thickness: 0, both: 0 };
+  appState.seamRows.forEach((row) => {
+    const special = getSpecialCase(row).key;
+    if (special === "dissimilar") count.dissimilar += 1;
+    if (special === "thickness") count.thickness += 1;
+    if (special === "both") count.both += 1;
+  });
+  document.querySelector("#special-dissimilar-count").textContent = String(count.dissimilar);
+  document.querySelector("#special-thickness-count").textContent = String(count.thickness);
+  document.querySelector("#special-both-count").textContent = String(count.both);
+}
+
+function renderSeamTable() {
+  seamBody.innerHTML = "";
+  appState.seamRows.forEach((row, idx) => {
+    const tr = document.createElement("tr");
+    const special = getSpecialCase(row);
+    const stateType = row.status === "confirmed" ? "ok" : row.status === "uncertain" ? "danger" : "warn";
+    tr.innerHTML = `
+      <td>${row.id}</td>
+      <td contenteditable="true" data-edit="${idx}:matA">${row.matA}</td>
+      <td contenteditable="true" data-edit="${idx}:matB">${row.matB}</td>
+      <td contenteditable="true" data-edit="${idx}:thkA">${row.thkA}</td>
+      <td contenteditable="true" data-edit="${idx}:thkB">${row.thkB}</td>
+      <td contenteditable="true" data-edit="${idx}:pos">${row.pos}</td>
+      <td>${row.symbol}</td>
+      <td>${statusTag(special.label, special.type)}</td>
+      <td>${row.conf.toFixed(2)}</td>
+      <td>${statusTag(row.status, stateType)}</td>
+    `;
+    seamBody.appendChild(tr);
+  });
+  document.querySelector("#status-seam-count").textContent = String(appState.seamRows.length);
+  const pendingCount = appState.seamRows.filter((row) => row.status !== "confirmed").length;
+  document.querySelector("#project-pending-count").textContent = `${pendingCount} 条`;
+  renderSpecialSummary();
+}
+
+function normalizeSortValue(table, row, col) {
+  if (table === "pqr") {
+    if (col === "valid") return new Date(row.valid).getTime();
+    if (col === "maxDelta") return Number(row.maxDelta) || 0;
+    if (col === "dissimilar") return row.dissimilar ? 1 : 0;
+    if (col === "thicknessMismatch") return row.thicknessMismatch ? 1 : 0;
+    return String(row[col] ?? "").toLowerCase();
+  }
+  if (table === "welder") {
+    if (col === "exp") return new Date(row.exp).getTime();
+    if (col === "thicknessDeltaMax") return Number(row.thicknessDeltaMax) || 0;
+    if (col === "dissimilarQualified") return row.dissimilarQualified ? 1 : 0;
+    if (col === "thicknessMismatchQualified") return row.thicknessMismatchQualified ? 1 : 0;
+    return String(row[col] ?? "").toLowerCase();
+  }
+  return 0;
+}
+
+function compareBySort(table, sortCol, sortDir) {
+  return (leftRow, rightRow) => {
+    const left = normalizeSortValue(table, leftRow, sortCol);
+    const right = normalizeSortValue(table, rightRow, sortCol);
+    if (typeof left === "number" && typeof right === "number") {
+      return sortDir === "asc" ? left - right : right - left;
+    }
+    const result = String(left).localeCompare(String(right), "zh-CN");
+    return sortDir === "asc" ? result : -result;
+  };
+}
+
+function getFilteredSortedPqrRows() {
+  const { dissimilarOnly, thicknessOnly, sortCol, sortDir } = appState.pqrFilter;
+  const filtered = appState.pqrRows.filter((row) => {
+    if (dissimilarOnly && !row.dissimilar) return false;
+    if (thicknessOnly && !row.thicknessMismatch) return false;
+    return true;
+  });
+  return [...filtered].sort(compareBySort("pqr", sortCol, sortDir));
+}
+
+function getFilteredSortedWelderRows() {
+  const { dissimilarOnly, thicknessOnly, sortCol, sortDir } = appState.welderFilter;
+  const filtered = appState.welderRows.filter((row) => {
+    if (dissimilarOnly && !row.dissimilarQualified) return false;
+    if (thicknessOnly && !row.thicknessMismatchQualified) return false;
+    return true;
+  });
+  return [...filtered].sort(compareBySort("welder", sortCol, sortDir));
+}
+
+function renderPqr() {
+  const rows = getFilteredSortedPqrRows();
+  pqrBody.innerHTML = rows
+    .map((row) => {
+      const statusType = row.status === "active" ? "ok" : "warn";
+      return `
+        <tr>
+          <td>${row.id}</td>
+          <td>${row.standard}</td>
+          <td>${row.process}</td>
+          <td>${row.range}</td>
+          <td>${row.pos}</td>
+          <td>${statusTag(row.dissimilar ? "支持" : "不支持", row.dissimilar ? "ok" : "warn")}</td>
+          <td>${statusTag(row.thicknessMismatch ? "支持" : "不支持", row.thicknessMismatch ? "ok" : "warn")}</td>
+          <td>${row.maxDelta}</td>
+          <td>${row.valid}</td>
+          <td>${statusTag(row.status, statusType)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderWelder() {
+  const rows = getFilteredSortedWelderRows();
+  welderBody.innerHTML = rows
+    .map((row) => {
+      const statusType = row.status === "active" ? "ok" : "warn";
+      return `
+        <tr>
+          <td>${row.id}</td>
+          <td>${row.cert}</td>
+          <td>${row.process}</td>
+          <td>${row.pos}</td>
+          <td>${row.group}</td>
+          <td>${statusTag(row.dissimilarQualified ? "具备" : "无", row.dissimilarQualified ? "ok" : "warn")}</td>
+          <td>${statusTag(row.thicknessMismatchQualified ? "具备" : "无", row.thicknessMismatchQualified ? "ok" : "warn")}</td>
+          <td>${row.thicknessDeltaMax}</td>
+          <td>${row.exp}</td>
+          <td>${statusTag(row.status, statusType)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderAlternatives() {
+  altList.innerHTML = appState.alternatives
+    .map((item, idx) => `<li>#${idx + 1} ${item.pqr} + ${item.welder} <strong>${item.score.toFixed(2)}</strong></li>`)
+    .join("");
+}
+
+function renderConflicts(severity = "all") {
+  const rows = severity === "all" ? appState.conflicts : appState.conflicts.filter((item) => item.severity === severity);
+  conflictBody.innerHTML = rows
+    .map((item) => {
+      const cls = item.severity === "error" ? "danger" : "warn";
+      return `
+        <tr>
+          <td>${item.entity}</td>
+          <td>${item.field}</td>
+          <td>${item.actual}</td>
+          <td>${item.expected}</td>
+          <td>${item.clause}</td>
+          <td>${statusTag(item.severity, cls)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function setView(viewKey) {
+  appState.view = viewKey;
+  menuButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.view === viewKey));
+  views.forEach((panel) => panel.classList.toggle("is-visible", panel.dataset.viewPanel === viewKey));
+  const meta = viewMeta[viewKey];
+  document.querySelector("#view-title").textContent = meta.title;
+  document.querySelector("#breadcrumb").textContent = meta.breadcrumb;
+  document.querySelector("#detail-title").textContent = meta.detailTitle;
+  document.querySelector("#detail-content").textContent = meta.detailText;
+}
+
+function appendLog(text) {
+  const panel = document.querySelector("#parse-log");
+  const p = document.createElement("p");
+  p.textContent = `[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] ${text}`;
+  panel.appendChild(p);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function simulateParse() {
+  appState.parseProgress = 0;
+  const bar = document.querySelector("#parse-progress-bar");
+  const label = document.querySelector("#parse-progress-label");
+  appendLog("开始解析图纸批次");
+  const timer = setInterval(() => {
+    appState.parseProgress += 8 + Math.random() * 10;
+    if (appState.parseProgress >= 100) {
+      appState.parseProgress = 100;
+      clearInterval(timer);
+      bar.style.width = "100%";
+      label.textContent = "解析完成: 焊缝信息表已生成";
+      appendLog("解析完成，识别到 12 条焊缝");
+      appState.seamRows = appState.seamRows.map((row) => {
+        const next = { ...row };
+        if (next.conf < 0.7 && next.status !== "confirmed") next.status = "uncertain";
+        return next;
+      });
+      renderSeamTable();
+      setStatusSnapshot();
+      return;
+    }
+    bar.style.width = `${appState.parseProgress}%`;
+    label.textContent = `解析进度 ${Math.floor(appState.parseProgress)}%`;
+    appendLog(`正在识别焊缝符号与几何要素 (${Math.floor(appState.parseProgress)}%)`);
+  }, 350);
+}
+
+function setStatusSnapshot() {
+  document.querySelector("#status-standard").textContent = appState.standard;
+  const hasError = appState.conflicts.some((item) => item.severity === "error");
+  document.querySelector("#status-match").textContent = hasError ? "partial" : "match";
+  document.querySelector("#status-license").textContent = appState.licenseStatus;
+}
+
+function runMatch() {
+  const score = 0.7 + Math.random() * 0.22;
+  const pick = appState.alternatives[Math.floor(Math.random() * appState.alternatives.length)];
+  document.querySelector("#best-pqr").textContent = pick.pqr;
+  document.querySelector("#best-welder").textContent = pick.welder;
+  document.querySelector("#best-score").textContent = score.toFixed(2);
+  const decision = appState.conflicts.some((item) => item.severity === "error") ? "partial" : "match";
+  document.querySelector("#decision-label").textContent = decision;
+  document.querySelector("#status-match").textContent = decision;
+  addEvent(`匹配执行完成，推荐 ${pick.pqr} + ${pick.welder}`);
+}
+
+function addEvent(text) {
+  const ul = document.querySelector("#event-stream");
+  const li = document.createElement("li");
+  li.textContent = `[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] ${text}`;
+  ul.prepend(li);
+  if (ul.children.length > 8) ul.removeChild(ul.lastElementChild);
+}
+
+function bumpTraceId() {
+  const parts = appState.traceId.split("-");
+  const current = Number(parts[parts.length - 1]) || 0;
+  const next = String(current + 1).padStart(5, "0");
+  appState.traceId = `${parts.slice(0, -1).join("-")}-${next}`;
+  document.querySelector("#trace-id").textContent = appState.traceId;
+}
+
+function initHandlers() {
+  menuButtons.forEach((btn) => btn.addEventListener("click", () => setView(btn.dataset.view)));
+
+  const allSortButtons = [...document.querySelectorAll(".head-sort-btn")];
+  const allFilterButtons = [...document.querySelectorAll(".head-filter-btn")];
+  const getFilterStateByTable = (table) => (table === "pqr" ? appState.pqrFilter : appState.welderFilter);
+  const renderTableByName = (table) => {
+    if (table === "pqr") renderPqr();
+    if (table === "welder") renderWelder();
+  };
+
+  const syncSortButtons = () => {
+    allSortButtons.forEach((btn) => {
+      const state = getFilterStateByTable(btn.dataset.table);
+      const active = state.sortCol === btn.dataset.col;
+      btn.classList.toggle("is-active", active);
+      btn.textContent = active ? (state.sortDir === "asc" ? "↑" : "↓") : "↕";
+    });
+  };
+
+  const syncFilterButtons = () => {
+    allFilterButtons.forEach((btn) => {
+      if (btn.dataset.filterType !== "bool") {
+        btn.classList.remove("is-active");
+        return;
+      }
+      const state = getFilterStateByTable(btn.dataset.table);
+      btn.classList.toggle("is-active", Boolean(state[btn.dataset.filterKey]));
+    });
+  };
+
+  const closeFilterPopover = () => {
+    columnFilterPopover.classList.add("hidden");
+    uiState.activeFilterContext = null;
+  };
+
+  const openFilterPopover = (btn) => {
+    const table = btn.dataset.table;
+    const filterType = btn.dataset.filterType || "none";
+    const filterKey = btn.dataset.filterKey || "";
+    const filterLabel = btn.dataset.filterLabel || "No filters";
+    const col = btn.dataset.col || "";
+    uiState.activeFilterContext = { table, filterType, filterKey, col };
+
+    const colName = btn.closest(".head-cell")?.querySelector("span")?.textContent?.trim() || col;
+    columnFilterTitle.textContent = colName;
+
+    if (filterType === "bool") {
+      const checked = Boolean(getFilterStateByTable(table)[filterKey]);
+      columnFilterBody.innerHTML = `
+        <label class="column-filter-check">
+          <input id="column-filter-check" type="checkbox" ${checked ? "checked" : ""} />
+          ${filterLabel}
+        </label>
+      `;
+    } else {
+      columnFilterBody.textContent = "No filters";
+    }
+
+    const rect = btn.getBoundingClientRect();
+    const popWidth = 180;
+    const left = Math.min(window.innerWidth - popWidth - 12, Math.max(12, rect.left + rect.width / 2 - popWidth / 2));
+    const top = Math.min(window.innerHeight - 170, rect.bottom + 8);
+    columnFilterPopover.style.left = `${left}px`;
+    columnFilterPopover.style.top = `${top}px`;
+    columnFilterPopover.classList.remove("hidden");
+  };
+
+  allSortButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const state = getFilterStateByTable(btn.dataset.table);
+      if (state.sortCol === btn.dataset.col) {
+        state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+      } else {
+        state.sortCol = btn.dataset.col;
+        state.sortDir = "asc";
+      }
+      syncSortButtons();
+      renderTableByName(btn.dataset.table);
+    });
+  });
+
+  allFilterButtons.forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openFilterPopover(btn);
+    });
+  });
+
+  columnFilterResetBtn.addEventListener("click", () => {
+    const context = uiState.activeFilterContext;
+    if (!context) return;
+    if (context.filterType === "bool") {
+      const check = document.querySelector("#column-filter-check");
+      if (check) check.checked = false;
+    }
+  });
+
+  columnFilterOkBtn.addEventListener("click", () => {
+    const context = uiState.activeFilterContext;
+    if (!context) return;
+    if (context.filterType === "bool") {
+      const check = document.querySelector("#column-filter-check");
+      getFilterStateByTable(context.table)[context.filterKey] = Boolean(check?.checked);
+      syncFilterButtons();
+      renderTableByName(context.table);
+    }
+    closeFilterPopover();
+  });
+
+  document.addEventListener("click", (event) => {
+    if (columnFilterPopover.classList.contains("hidden")) return;
+    if (columnFilterPopover.contains(event.target)) return;
+    if (event.target.closest(".head-filter-btn")) return;
+    closeFilterPopover();
+  });
+
+  syncSortButtons();
+  syncFilterButtons();
+
+  document.querySelector("#project-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    appState.standard = form.get("standard_code");
+    setStatusSnapshot();
+    addEvent(`项目已创建，标准设置为 ${appState.standard}`);
+    setView("import");
+  });
+
+  document.querySelector("#btn-parse").addEventListener("click", simulateParse);
+  document.querySelector("#btn-retry-parse").addEventListener("click", () => appendLog("重试任务已入队"));
+
+  document.querySelector("#btn-confirm-all").addEventListener("click", () => {
+    appState.seamRows = appState.seamRows.map((row) => ({ ...row, status: "confirmed" }));
+    renderSeamTable();
+    addEvent("焊缝信息已批量确认");
+  });
+
+  document.querySelector("#btn-mark-uncertain").addEventListener("click", () => {
+    appState.seamRows = appState.seamRows.map((row) => (row.conf < 0.7 ? { ...row, status: "uncertain" } : row));
+    renderSeamTable();
+    addEvent("低置信度焊缝已标记 uncertain");
+  });
+
+  document.querySelector("#btn-mark-special").addEventListener("click", () => {
+    appState.seamRows = appState.seamRows.map((row) => {
+      const special = getSpecialCase(row).key;
+      if (special !== "normal" && row.status !== "confirmed") return { ...row, status: "uncertain" };
+      return row;
+    });
+    renderSeamTable();
+    addEvent("特殊工况焊缝已标记 uncertain");
+  });
+
+  seamBody.addEventListener(
+    "blur",
+    (event) => {
+      const target = event.target;
+      const key = target?.dataset?.edit;
+      if (!key) return;
+      const [idx, field] = key.split(":");
+      const row = appState.seamRows[Number(idx)];
+      if (!row) return;
+      const value = target.textContent.trim();
+      if (field === "thkA" || field === "thkB") {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          target.textContent = String(row[field]);
+          return;
+        }
+        row[field] = parsed;
+      } else {
+        row[field] = value;
+      }
+      row.status = row.status === "confirmed" ? "confirmed" : "pending";
+      renderSpecialSummary();
+      addEvent(`焊缝 ${row.id} 字段 ${field} 已更新`);
+    },
+    true
+  );
+
+  document.querySelector("#btn-run-match").addEventListener("click", () => {
+    runMatch();
+    bumpTraceId();
+  });
+
+  document.querySelectorAll(".filter-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".filter-btn").forEach((node) => node.classList.remove("active"));
+      btn.classList.add("active");
+      renderConflicts(btn.dataset.severity);
+    });
+  });
+
+  document.querySelector("#template-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    appState.templateVersion[2] += 1;
+    const version = appState.templateVersion.join(".");
+    document.querySelector("#template-version-label").textContent = `当前版本: ${version}`;
+    addEvent(`模板映射保存成功，版本 ${version}`);
+  });
+
+  document.querySelector("#btn-export-word").addEventListener("click", () => {
+    document.querySelector("#export-feedback").textContent = `Word 导出成功: WPS_${Date.now()}.docx`;
+    addEvent("Word 导出完成");
+  });
+
+  document.querySelector("#btn-export-pdf").addEventListener("click", () => {
+    document.querySelector("#export-feedback").textContent = `PDF 导出成功: WPS_${Date.now()}.pdf`;
+    addEvent("PDF 导出完成");
+  });
+
+  document.querySelector("#license-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const key = new FormData(event.currentTarget).get("license_key").toString().trim();
+    const ok = /^WL-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(key);
+    const label = document.querySelector("#license-feedback");
+    if (ok) {
+      appState.licenseStatus = "Activated";
+      label.textContent = "激活成功，有效期至 2027-03-01";
+      label.style.color = "#2c9655";
+      addEvent("许可证在线激活成功");
+    } else {
+      appState.licenseStatus = "InvalidKey";
+      label.textContent = "激活失败，密钥格式不合法";
+      label.style.color = "#d44a4a";
+      addEvent("许可证激活失败: InvalidKey");
+    }
+    setStatusSnapshot();
+  });
+}
+
+function startClock() {
+  const clock = document.querySelector("#system-clock");
+  const tick = () => {
+    clock.textContent = new Date().toLocaleString("zh-CN", { hour12: false });
+  };
+  tick();
+  setInterval(tick, 1000);
+}
+
+function init() {
+  renderSeamTable();
+  renderPqr();
+  renderWelder();
+  renderAlternatives();
+  renderConflicts("all");
+  setStatusSnapshot();
+  initHandlers();
+  startClock();
+}
+
+init();

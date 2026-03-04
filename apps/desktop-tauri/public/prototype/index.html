@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WeldLayer UI Prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Saira+Condensed:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <div class="background-shape shape-a"></div>
+    <div class="background-shape shape-b"></div>
+    <div class="background-grid"></div>
+
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">WL</div>
+          <div>
+            <p class="brand-title">WeldLayer</p>
+            <p class="brand-sub">Desktop UI Prototype</p>
+          </div>
+        </div>
+
+        <nav class="menu">
+          <button class="menu-item active" data-view="project">项目首页</button>
+          <button class="menu-item" data-view="import">图纸导入解析</button>
+          <button class="menu-item" data-view="seam">焊缝信息确认</button>
+          <button class="menu-item" data-view="pqr">PQR管理</button>
+          <button class="menu-item" data-view="welder">焊工资格管理</button>
+          <button class="menu-item" data-view="match">匹配与冲突解释</button>
+          <button class="menu-item" data-view="template">模板映射</button>
+          <button class="menu-item" data-view="export">工艺卡预览导出</button>
+          <button class="menu-item" data-view="license">许可证中心</button>
+        </nav>
+
+        <section class="quick-status">
+          <h3>项目快照</h3>
+          <p><span>标准</span><strong id="status-standard">ASME_IX</strong></p>
+          <p><span>焊缝</span><strong id="status-seam-count">12</strong></p>
+          <p><span>匹配状态</span><strong id="status-match">partial</strong></p>
+          <p><span>许可证</span><strong id="status-license">Activated</strong></p>
+        </section>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="caption" id="breadcrumb">项目中心 / 项目首页</p>
+            <h1 id="view-title">焊接工艺匹配工作台</h1>
+          </div>
+          <div class="top-actions">
+            <button class="ghost">切换项目</button>
+            <button class="ghost">导入样例数据</button>
+            <button class="primary">保存快照</button>
+          </div>
+        </header>
+
+        <div class="content-shell">
+          <main class="main-panel">
+            <section class="view is-visible" data-view-panel="project">
+              <div class="grid two">
+                <article class="card hero">
+                  <p class="card-kicker">当前项目</p>
+                  <h2>压力管道改造 A-26</h2>
+                  <p>目标体系：ASME IX。数据模式：本地单机。状态：图纸解析完成，等待匹配确认。</p>
+                  <div class="pill-row">
+                    <span class="pill">PDF + DWG</span>
+                    <span class="pill">离线可用</span>
+                    <span class="pill">模板: TPL-ASME-001</span>
+                  </div>
+                </article>
+
+                <article class="card">
+                  <p class="card-kicker">新建项目</p>
+                  <form class="form-grid" id="project-form">
+                    <label>项目名称<input name="project_name" value="新建焊接项目" /></label>
+                    <label>项目编号<input name="project_code" value="PRJ-2026-001" /></label>
+                    <label>企业名称<input name="company" value="Laimiu Fabrication" /></label>
+                    <label>
+                      标准体系
+                      <select name="standard_code">
+                        <option>ASME_IX</option>
+                        <option>CN_GB</option>
+                      </select>
+                    </label>
+                    <button class="primary full" type="submit">创建并进入导入流程</button>
+                  </form>
+                </article>
+              </div>
+
+              <div class="grid three">
+                <article class="card">
+                  <p class="card-kicker">本周解析量</p>
+                  <h3>24 图纸</h3>
+                </article>
+                <article class="card">
+                  <p class="card-kicker">待确认焊缝</p>
+                  <h3 id="project-pending-count">5 条</h3>
+                </article>
+                <article class="card">
+                  <p class="card-kicker">最近匹配分</p>
+                  <h3>0.86</h3>
+                </article>
+              </div>
+            </section>
+
+            <section class="view" data-view-panel="import">
+              <div class="grid two">
+                <article class="card dropzone">
+                  <p class="card-kicker">图纸导入</p>
+                  <h2>拖拽 PDF / DWG 到此处</h2>
+                  <p>支持复杂焊接符号与剖视信息识别</p>
+                  <div class="button-row">
+                    <button class="primary" id="btn-parse">开始解析</button>
+                    <button class="ghost" id="btn-retry-parse">失败重试</button>
+                  </div>
+                  <div class="progress-wrap">
+                    <div class="progress-bar" id="parse-progress-bar"></div>
+                  </div>
+                  <p class="mono" id="parse-progress-label">等待执行</p>
+                </article>
+
+                <article class="card">
+                  <p class="card-kicker">文件队列</p>
+                  <ul class="queue-list">
+                    <li><span>pressure_line_01.pdf</span><strong>Ready</strong></li>
+                    <li><span>vessel_joint_revB.dwg</span><strong>Ready</strong></li>
+                    <li><span>support_branch_03.dwg</span><strong>Queued</strong></li>
+                  </ul>
+                </article>
+              </div>
+
+              <article class="card">
+                <p class="card-kicker">解析日志</p>
+                <div class="log-panel" id="parse-log">
+                  <p>[09:30:01] 初始化图纸解析任务</p>
+                  <p>[09:30:03] 载入焊接符号识别模型</p>
+                </div>
+              </article>
+            </section>
+
+            <section class="view" data-view-panel="seam">
+              <article class="card">
+                <div class="toolbar">
+                  <div class="button-row">
+                    <button class="primary" id="btn-confirm-all">批量确认</button>
+                    <button class="ghost" id="btn-mark-uncertain">标记低置信度</button>
+                    <button class="ghost" id="btn-mark-special">标记特殊工况</button>
+                  </div>
+                  <div class="legend">
+                    <span class="tag ok">confirmed</span>
+                    <span class="tag warn">pending</span>
+                    <span class="tag danger">uncertain</span>
+                  </div>
+                </div>
+
+                <div class="special-grid">
+                  <article class="special-card">
+                    <p class="card-kicker">异种金属</p>
+                    <h3 id="special-dissimilar-count">0</h3>
+                    <p>母材A与母材B分组不一致</p>
+                  </article>
+                  <article class="special-card">
+                    <p class="card-kicker">不同厚度</p>
+                    <h3 id="special-thickness-count">0</h3>
+                    <p>厚度差超阈值，需复核工艺参数</p>
+                  </article>
+                  <article class="special-card">
+                    <p class="card-kicker">双重特殊工况</p>
+                    <h3 id="special-both-count">0</h3>
+                    <p>同时异种金属+不同厚度</p>
+                  </article>
+                </div>
+
+                <ul class="rule-list">
+                  <li>异种金属：需要复核焊材与过渡层工艺建议。</li>
+                  <li>不同厚度：需要复核坡口型式、热输入和层间控制。</li>
+                </ul>
+
+                <div class="table-wrap">
+                  <table id="seam-table">
+                    <thead>
+                      <tr>
+                        <th>焊缝ID</th>
+                        <th>母材A</th>
+                        <th>母材B</th>
+                        <th>厚度A(mm)</th>
+                        <th>厚度B(mm)</th>
+                        <th>位置</th>
+                        <th>符号</th>
+                        <th>特殊工况</th>
+                        <th>置信度</th>
+                        <th>状态</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+
+            <section class="view" data-view-panel="pqr">
+              <article class="card">
+                <div class="toolbar">
+                  <p class="card-kicker">PQR 主数据</p>
+                  <div class="button-row">
+                    <button class="primary">新增PQR</button>
+                    <button class="ghost">导入Excel</button>
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>
+                          <div class="head-cell">
+                            <span>PQR ID</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="id" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="pqr" data-col="id" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>标准</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="standard" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="pqr" data-col="standard" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>工艺</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="process" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="pqr" data-col="process" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>厚度范围</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="range" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="pqr" data-col="range" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>位置范围</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="pos" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="pqr" data-col="pos" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>异种金属</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="dissimilar" title="排序">↕</button>
+                              <button
+                                id="pqr-filter-dissimilar"
+                                class="head-filter-btn"
+                                data-table="pqr"
+                                data-col="dissimilar"
+                                data-filter-type="bool"
+                                data-filter-key="dissimilarOnly"
+                                data-filter-label="仅支持"
+                                title="筛选"
+                              ></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>不同厚度</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="thicknessMismatch" title="排序">↕</button>
+                              <button
+                                id="pqr-filter-thickness"
+                                class="head-filter-btn"
+                                data-table="pqr"
+                                data-col="thicknessMismatch"
+                                data-filter-type="bool"
+                                data-filter-key="thicknessOnly"
+                                data-filter-label="仅支持"
+                                title="筛选"
+                              ></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>厚差上限(mm)</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="maxDelta" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="pqr" data-col="maxDelta" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>有效期</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="valid" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="pqr" data-col="valid" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>状态</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="pqr" data-col="status" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="pqr" data-col="status" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody id="pqr-body"></tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+
+            <section class="view" data-view-panel="welder">
+              <article class="card">
+                <div class="toolbar">
+                  <p class="card-kicker">焊工资质主数据</p>
+                  <div class="button-row">
+                    <button class="primary">新增焊工资格</button>
+                    <button class="ghost">批量导入</button>
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>
+                          <div class="head-cell">
+                            <span>焊工ID</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="id" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="welder" data-col="id" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>证书号</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="cert" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="welder" data-col="cert" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>工艺</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="process" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="welder" data-col="process" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>位置范围</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="pos" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="welder" data-col="pos" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>材料范围</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="group" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="welder" data-col="group" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>异种金属</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="dissimilarQualified" title="排序">↕</button>
+                              <button
+                                id="welder-filter-dissimilar"
+                                class="head-filter-btn"
+                                data-table="welder"
+                                data-col="dissimilarQualified"
+                                data-filter-type="bool"
+                                data-filter-key="dissimilarOnly"
+                                data-filter-label="仅具备"
+                                title="筛选"
+                              ></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>不同厚度</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="thicknessMismatchQualified" title="排序">↕</button>
+                              <button
+                                id="welder-filter-thickness"
+                                class="head-filter-btn"
+                                data-table="welder"
+                                data-col="thicknessMismatchQualified"
+                                data-filter-type="bool"
+                                data-filter-key="thicknessOnly"
+                                data-filter-label="仅具备"
+                                title="筛选"
+                              ></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>厚差资格(mm)</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="thicknessDeltaMax" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="welder" data-col="thicknessDeltaMax" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>到期日</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="exp" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="welder" data-col="exp" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                        <th>
+                          <div class="head-cell">
+                            <span>状态</span>
+                            <div class="head-icons">
+                              <button class="head-sort-btn" data-table="welder" data-col="status" title="排序">↕</button>
+                              <button class="head-filter-btn" data-table="welder" data-col="status" data-filter-type="none" title="筛选"></button>
+                            </div>
+                          </div>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody id="welder-body"></tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+
+            <section class="view" data-view-panel="match">
+              <div class="grid two">
+                <article class="card">
+                  <div class="toolbar">
+                    <p class="card-kicker">推荐结果</p>
+                    <button class="primary" id="btn-run-match">重新匹配</button>
+                  </div>
+                  <div class="result-card">
+                    <p>Decision: <strong id="decision-label">partial</strong></p>
+                    <p>推荐 PQR: <strong id="best-pqr">PQR-102</strong></p>
+                    <p>推荐焊工: <strong id="best-welder">W-018</strong></p>
+                    <p>综合分: <strong id="best-score">0.86</strong></p>
+                  </div>
+                </article>
+                <article class="card">
+                  <p class="card-kicker">备选方案</p>
+                  <ul class="alt-list" id="alt-list"></ul>
+                </article>
+              </div>
+
+              <article class="card">
+                <div class="toolbar">
+                  <p class="card-kicker">冲突解释</p>
+                  <div class="button-row">
+                    <button class="ghost filter-btn active" data-severity="all">全部</button>
+                    <button class="ghost filter-btn" data-severity="error">error</button>
+                    <button class="ghost filter-btn" data-severity="warning">warning</button>
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>实体</th>
+                        <th>字段</th>
+                        <th>实际值</th>
+                        <th>期望</th>
+                        <th>条款</th>
+                        <th>级别</th>
+                      </tr>
+                    </thead>
+                    <tbody id="conflict-body"></tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+
+            <section class="view" data-view-panel="template">
+              <div class="grid two">
+                <article class="card">
+                  <p class="card-kicker">模板列表</p>
+                  <ul class="queue-list">
+                    <li><span>TPL-ASME-001</span><strong>preset</strong></li>
+                    <li><span>TPL-CN-001</span><strong>preset</strong></li>
+                    <li><span>TPL-ENT-LAIMIU</span><strong>enterprise</strong></li>
+                  </ul>
+                </article>
+
+                <article class="card">
+                  <p class="card-kicker">映射规则</p>
+                  <form class="form-grid" id="template-form">
+                    <label>目标字段<input name="target_field" value="wps.base_material" /></label>
+                    <label>来源模块
+                      <select name="source_module">
+                        <option>weld_seam</option>
+                        <option>pqr</option>
+                        <option>welder</option>
+                        <option>system</option>
+                      </select>
+                    </label>
+                    <label>来源字段<input name="source_field" value="material_spec" /></label>
+                    <label>转换规则
+                      <select name="transform_rule">
+                        <option>identity</option>
+                        <option>concat</option>
+                        <option>format_date</option>
+                        <option>number</option>
+                      </select>
+                    </label>
+                    <button class="primary full" type="submit">保存新版本</button>
+                  </form>
+                  <p class="mono" id="template-version-label">当前版本: 1.0.0</p>
+                </article>
+              </div>
+            </section>
+
+            <section class="view" data-view-panel="export">
+              <div class="grid two">
+                <article class="card preview-sheet">
+                  <p class="card-kicker">工艺卡预览</p>
+                  <h3>WPS Draft - ASME</h3>
+                  <p>项目: 压力管道改造 A-26</p>
+                  <p>推荐组合: PQR-102 + W-018</p>
+                  <p>冲突摘要: 1 error / 1 warning</p>
+                  <p>trace_id: TRC-20260304-00017</p>
+                </article>
+
+                <article class="card">
+                  <p class="card-kicker">完整性检查</p>
+                  <ul class="check-list">
+                    <li><span>required fields</span><strong class="ok-text">pass</strong></li>
+                    <li><span>template mapping</span><strong class="ok-text">pass</strong></li>
+                    <li><span>clause reference</span><strong class="warn-text">warning</strong></li>
+                  </ul>
+                  <div class="button-row">
+                    <button class="primary" id="btn-export-word">导出Word</button>
+                    <button class="ghost" id="btn-export-pdf">导出PDF</button>
+                  </div>
+                  <p class="mono" id="export-feedback">等待导出操作</p>
+                </article>
+              </div>
+            </section>
+
+            <section class="view" data-view-panel="license">
+              <div class="grid two">
+                <article class="card">
+                  <p class="card-kicker">在线激活</p>
+                  <form class="form-grid" id="license-form">
+                    <label>License Key<input name="license_key" placeholder="WL-XXXX-XXXX-XXXX" /></label>
+                    <button class="primary full" type="submit">在线激活</button>
+                  </form>
+                  <p class="mono" id="license-feedback">未激活</p>
+                </article>
+                <article class="card">
+                  <p class="card-kicker">离线激活</p>
+                  <div class="button-row">
+                    <button class="ghost">生成 .licreq</button>
+                    <button class="ghost">导入 .lic</button>
+                  </div>
+                  <ul class="queue-list compact">
+                    <li><span>device_fingerprint</span><strong>9D1A-3E7C</strong></li>
+                    <li><span>plan</span><strong>enterprise</strong></li>
+                    <li><span>valid_to</span><strong>2027-03-01</strong></li>
+                  </ul>
+                </article>
+              </div>
+            </section>
+          </main>
+
+          <aside class="detail-panel">
+            <p class="card-kicker">详情抽屉</p>
+            <h3 id="detail-title">项目摘要</h3>
+            <p id="detail-content">
+              当前视图展示端到端流程入口。建议下一步进入图纸导入页开始解析任务。
+            </p>
+            <hr />
+            <p class="card-kicker">最近事件</p>
+            <ul id="event-stream" class="event-stream">
+              <li>[09:31] 项目创建成功</li>
+              <li>[09:32] 规则包 ASME_IX v1.0.0 已加载</li>
+              <li>[09:34] 模板 TPL-ASME-001 已启用</li>
+            </ul>
+          </aside>
+        </div>
+
+        <footer class="status-bar">
+          <p>模式: Prototype</p>
+          <p>trace_id: <span id="trace-id">TRC-20260304-00017</span></p>
+          <p>本地状态: <span id="system-clock"></span></p>
+        </footer>
+      </div>
+    </div>
+
+    <div id="column-filter-popover" class="column-filter-popover hidden" role="dialog" aria-modal="false">
+      <div class="column-filter-header" id="column-filter-title">Filter</div>
+      <div class="column-filter-body" id="column-filter-body">No filters</div>
+      <div class="column-filter-actions">
+        <button type="button" class="ghost small" id="column-filter-reset">Reset</button>
+        <button type="button" class="primary small" id="column-filter-ok">OK</button>
+      </div>
+    </div>
+  </body>
+</html>
