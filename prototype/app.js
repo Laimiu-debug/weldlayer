@@ -110,6 +110,7 @@ const appState = {
       status: "active"
     }
   ],
+  batchRows: MASTER_BATCH_ROWS.map((row) => ({ ...row })),
   alternatives: [
     { pqr: "PQR-118", welder: "W-021", score: 0.72 },
     { pqr: "PQR-102", welder: "W-042", score: 0.69 },
@@ -208,11 +209,19 @@ const viewMeta = {
   }
 };
 
+viewMeta.inventory = {
+  title: "Inventory Batches",
+  breadcrumb: "Resource Library / Inventory Batches",
+  detailTitle: "Consumable Batch Master Data",
+  detailText: "Manage batch stock, expiry dates, and availability with backend sync support."
+};
+
 const menuButtons = [...document.querySelectorAll(".menu-item")];
 const views = [...document.querySelectorAll(".view")];
 const seamBody = document.querySelector("#seam-table tbody");
 const pqrBody = document.querySelector("#pqr-body");
 const welderBody = document.querySelector("#welder-body");
+const batchBody = document.querySelector("#batch-body");
 const altList = document.querySelector("#alt-list");
 const conflictBody = document.querySelector("#conflict-body");
 const columnFilterPopover = document.querySelector("#column-filter-popover");
@@ -373,6 +382,48 @@ function renderWelder() {
     .join("");
 }
 
+function normalizeBatchRow(item) {
+  return {
+    batch_no: String(item?.batch_no || ""),
+    material_code: String(item?.material_code || ""),
+    spec_standard: String(item?.spec_standard || ""),
+    qty_available: Number(item?.qty_available) || 0,
+    safety_stock: Number(item?.safety_stock) || 0,
+    expiry_date: String(item?.expiry_date || ""),
+    status: String(item?.status || "active")
+  };
+}
+
+function getNextBatchNo() {
+  const existing = new Set(appState.batchRows.map((row) => String(row.batch_no || "")));
+  let index = 1;
+  while (existing.has(`B-${String(index).padStart(3, "0")}`)) {
+    index += 1;
+  }
+  return `B-${String(index).padStart(3, "0")}`;
+}
+
+function renderBatch() {
+  if (!batchBody) return;
+  batchBody.innerHTML = appState.batchRows
+    .map((row, idx) => {
+      const statusType = row.status === "active" ? "ok" : "warn";
+      return `
+        <tr>
+          <td>${row.batch_no}</td>
+          <td contenteditable="true" data-batch-edit="${idx}:material_code">${row.material_code}</td>
+          <td contenteditable="true" data-batch-edit="${idx}:spec_standard">${row.spec_standard}</td>
+          <td contenteditable="true" data-batch-edit="${idx}:qty_available">${Number(row.qty_available).toFixed(1)}</td>
+          <td contenteditable="true" data-batch-edit="${idx}:safety_stock">${Number(row.safety_stock).toFixed(1)}</td>
+          <td contenteditable="true" data-batch-edit="${idx}:expiry_date">${row.expiry_date}</td>
+          <td>${statusTag(row.status, statusType)}</td>
+          <td><button class="ghost" data-batch-delete="${idx}">Delete</button></td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
 function renderAlternatives() {
   altList.innerHTML = appState.alternatives
     .map((item, idx) => `<li>#${idx + 1} ${item.pqr} + ${item.welder} <strong>${item.score.toFixed(2)}</strong></li>`)
@@ -505,7 +556,7 @@ function buildMatchRequestPayload(useStoredMasterData = false) {
       { material_code: "ER70S-6", required_qty: 8.0 },
       { material_code: "ER308L", required_qty: 5.0 }
     ],
-    consumable_batches: useStoredMasterData ? [] : MASTER_BATCH_ROWS
+    consumable_batches: useStoredMasterData ? [] : appState.batchRows
   };
 }
 
@@ -636,7 +687,7 @@ async function syncMasterDataToBackend() {
     toPayload: (row) => welderRowToCandidate(row)
   });
 
-  await syncRowsToBackend(MASTER_BATCH_ROWS, {
+  await syncRowsToBackend(appState.batchRows, {
     list: "list_batches",
     upsert: "upsert_batch",
     delete: "delete_batch",
@@ -658,6 +709,12 @@ async function reloadWelderRowsFromBackend() {
   const rows = await listCommandItems("list_welders");
   appState.welderRows = rows.map((item) => welderCandidateToRow(item));
   renderWelder();
+}
+
+async function reloadBatchRowsFromBackend() {
+  const rows = await listCommandItems("list_batches");
+  appState.batchRows = rows.map((item) => normalizeBatchRow(item));
+  renderBatch();
 }
 
 async function invokeTauriCommand(command, args) {
@@ -913,6 +970,98 @@ function initHandlers() {
     });
   }
 
+  const batchAddBtn = document.querySelector("#btn-batch-add");
+  if (batchAddBtn) {
+    batchAddBtn.addEventListener("click", () => {
+      appState.batchRows.push(
+        normalizeBatchRow({
+          batch_no: getNextBatchNo(),
+          material_code: "ER70S-6",
+          spec_standard: "AWS A5.18",
+          qty_available: 0,
+          safety_stock: 0,
+          expiry_date: "",
+          status: "active"
+        })
+      );
+      renderBatch();
+      addEvent("new batch row added");
+    });
+  }
+
+  if (batchBody) {
+    batchBody.addEventListener(
+      "blur",
+      (event) => {
+        const target = event.target;
+        const key = target?.dataset?.batchEdit;
+        if (!key) return;
+        const [idxRaw, field] = key.split(":");
+        const idx = Number(idxRaw);
+        const row = appState.batchRows[idx];
+        if (!row) return;
+        const value = target.textContent.trim();
+
+        if (field === "qty_available" || field === "safety_stock") {
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            renderBatch();
+            return;
+          }
+          row[field] = parsed;
+        } else {
+          row[field] = value;
+        }
+        renderBatch();
+        addEvent(`batch ${row.batch_no} updated: ${field}`);
+      },
+      true
+    );
+
+    batchBody.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-batch-delete]");
+      if (!btn) return;
+      const idx = Number(btn.dataset.batchDelete);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= appState.batchRows.length) return;
+      const [removed] = appState.batchRows.splice(idx, 1);
+      renderBatch();
+      addEvent(`batch removed: ${removed?.batch_no || idx}`);
+    });
+  }
+
+  const batchSyncBtn = document.querySelector("#btn-batch-sync");
+  if (batchSyncBtn) {
+    batchSyncBtn.addEventListener("click", async () => {
+      try {
+        await syncRowsToBackend(appState.batchRows, {
+          list: "list_batches",
+          upsert: "upsert_batch",
+          delete: "delete_batch",
+          upsertArg: "batchJson",
+          deleteIdArg: "batchNo",
+          idField: "batch_no",
+          localId: (row) => row.batch_no,
+          toPayload: (row) => normalizeBatchRow(row)
+        });
+        addEvent("batch rows synced to backend");
+      } catch (error) {
+        addEvent(`batch sync failed: ${String(error)}`);
+      }
+    });
+  }
+
+  const batchLoadBtn = document.querySelector("#btn-batch-load");
+  if (batchLoadBtn) {
+    batchLoadBtn.addEventListener("click", async () => {
+      try {
+        await reloadBatchRowsFromBackend();
+        addEvent("batch rows loaded from backend");
+      } catch (error) {
+        addEvent(`batch load failed: ${String(error)}`);
+      }
+    });
+  }
+
   document.querySelector("#project-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1038,6 +1187,7 @@ function init() {
   renderSeamTable();
   renderPqr();
   renderWelder();
+  renderBatch();
   renderAlternatives();
   renderConflicts("all");
   setStatusSnapshot();

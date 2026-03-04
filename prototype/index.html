@@ -34,6 +34,7 @@
           <button class="menu-item" data-view="seam">焊缝信息确认</button>
           <button class="menu-item" data-view="pqr">PQR管理</button>
           <button class="menu-item" data-view="welder">焊工资格管理</button>
+          <button class="menu-item" data-view="inventory">Inventory Batches</button>
           <button class="menu-item" data-view="match">匹配与冲突解释</button>
           <button class="menu-item" data-view="template">模板映射</button>
           <button class="menu-item" data-view="export">工艺卡预览导出</button>
@@ -459,6 +460,36 @@
                       </tr>
                     </thead>
                     <tbody id="welder-body"></tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+
+            <section class="view" data-view-panel="inventory">
+              <article class="card">
+                <div class="toolbar">
+                  <p class="card-kicker">Consumable Batch Master Data</p>
+                  <div class="button-row">
+                    <button class="ghost" id="btn-batch-add">Add Batch</button>
+                    <button class="primary" id="btn-batch-sync">Sync to Backend</button>
+                    <button class="ghost" id="btn-batch-load">Load from Backend</button>
+                  </div>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Batch No</th>
+                        <th>Material Code</th>
+                        <th>Spec Standard</th>
+                        <th>Available Qty</th>
+                        <th>Safety Stock</th>
+                        <th>Expiry Date</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="batch-body"></tbody>
                   </table>
                 </div>
               </article>
