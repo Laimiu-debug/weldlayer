@@ -16,7 +16,8 @@ WeldLayer 是一个面向焊接工程场景的桌面应用仓库，当前已包�
 │   └── desktop-tauri/
 ├── crates/
 │   ├── contracts/
-│   └── core-engine/
+│   ├── core-engine/
+│   └── core-store/
 ├── docs/
 ├── prototype/
 └── sidecar/
@@ -28,6 +29,7 @@ WeldLayer 是一个面向焊接工程场景的桌面应用仓库，当前已包�
 ```bash
 cargo check
 cargo test -p core-engine
+cargo test -p core-store
 ```
 
 ## 当前阶段
