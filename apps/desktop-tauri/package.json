@@ -2,11 +2,28 @@
   "name": "desktop-tauri",
   "private": true,
   "version": "0.1.0",
-  "description": "WeldLayer desktop shell placeholder",
+  "type": "module",
+  "description": "WeldLayer desktop shell",
   "scripts": {
-    "dev": "echo \"TODO: initialize frontend and run tauri dev\"",
-    "build": "echo \"TODO: initialize frontend and run tauri build\"",
-    "dev:tauri": "cargo run --manifest-path src-tauri/Cargo.toml",
+    "dev": "vite --host 127.0.0.1 --port 15555 --strictPort",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 15556",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "check:tauri": "cargo check --manifest-path src-tauri/Cargo.toml"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4",
+    "@types/react": "^19.1.9",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
   }
 }
+
