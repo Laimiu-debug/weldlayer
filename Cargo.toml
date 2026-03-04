@@ -1,0 +1,13 @@
+[workspace]
+members = ["crates/contracts", "crates/core-engine"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "Proprietary"
+authors = ["weldlayer"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

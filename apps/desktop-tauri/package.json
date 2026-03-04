@@ -1,0 +1,10 @@
+{
+  "name": "desktop-tauri",
+  "private": true,
+  "version": "0.1.0",
+  "description": "WeldLayer desktop shell placeholder",
+  "scripts": {
+    "dev": "echo \"TODO: initialize tauri app\"",
+    "build": "echo \"TODO: initialize tauri app\""
+  }
+}

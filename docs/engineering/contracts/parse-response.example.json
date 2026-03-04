@@ -1,0 +1,31 @@
+{
+  "trace_id": "TRC-20260304-00022",
+  "status": "success",
+  "seams": [
+    {
+      "weld_id": "W-AUTO-001",
+      "draw_ref": "pressure_line_01.pdf",
+      "weld_symbol": "FW",
+      "material_spec": "P-No.1",
+      "thickness_mm": 13.0,
+      "position_code": "2G",
+      "confidence_score": 0.82
+    },
+    {
+      "weld_id": "W-AUTO-002",
+      "draw_ref": "vessel_joint_revB.dwg",
+      "weld_symbol": "BW",
+      "material_spec": "P-No.1",
+      "thickness_mm": 14.0,
+      "position_code": "2G",
+      "confidence_score": 0.65
+    }
+  ],
+  "errors": [],
+  "logs": [
+    {
+      "level": "info",
+      "message": "received 2 files"
+    }
+  ]
+}

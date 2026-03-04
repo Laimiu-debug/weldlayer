@@ -1,0 +1,19 @@
+{
+  "trace_id": "TRC-20260304-00022",
+  "project_id": "PRJ-2026-001",
+  "files": [
+    {
+      "path": "G:/drawings/pressure_line_01.pdf",
+      "file_type": "pdf"
+    },
+    {
+      "path": "G:/drawings/vessel_joint_revB.dwg",
+      "file_type": "dwg"
+    }
+  ],
+  "options": {
+    "detect_weld_symbols": true,
+    "detect_sections": true,
+    "language": "zh-CN"
+  }
+}

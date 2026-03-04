@@ -1,0 +1,67 @@
+{
+  "trace_id": "TRC-20260304-00021",
+  "project_id": "PRJ-2026-001",
+  "standard_code": "asme_ix",
+  "inventory_policy": "warn",
+  "top_k": 3,
+  "weld_seams": [
+    {
+      "weld_id": "W-001",
+      "material_group_a": "P-No.1",
+      "material_group_b": "P-No.1",
+      "thickness_a_mm": 12.0,
+      "thickness_b_mm": 12.0,
+      "position_code": "2G",
+      "process_hint": "GTAW",
+      "review_status": "confirmed"
+    }
+  ],
+  "pqr_candidates": [
+    {
+      "pqr_id": "PQR-001",
+      "standard_code": "asme_ix",
+      "process_code": "GTAW",
+      "material_group_scope": ["P-No.1"],
+      "thickness_min_mm": 3.0,
+      "thickness_max_mm": 45.0,
+      "position_scope": ["1G", "2G", "5G"],
+      "dissimilar_support": true,
+      "thickness_mismatch_support": true,
+      "thickness_delta_max_mm": 10.0,
+      "valid_to": "2027-01-01",
+      "status": "active"
+    }
+  ],
+  "welder_candidates": [
+    {
+      "welder_id": "WELDER-001",
+      "cert_no": "CERT-7782",
+      "standard_code": "asme_ix",
+      "process_code": "GTAW",
+      "material_group_scope": ["P-No.1"],
+      "position_scope": ["2G", "5G"],
+      "dissimilar_qualified": true,
+      "thickness_mismatch_qualified": true,
+      "thickness_delta_max_mm": 10.0,
+      "expiry_date": "2026-12-31",
+      "status": "active"
+    }
+  ],
+  "required_consumables": [
+    {
+      "material_code": "ER70S-6",
+      "required_qty": 8.0
+    }
+  ],
+  "consumable_batches": [
+    {
+      "batch_no": "B-001",
+      "material_code": "ER70S-6",
+      "spec_standard": "AWS A5.18",
+      "qty_available": 12.0,
+      "safety_stock": 5.0,
+      "expiry_date": "2027-03-01",
+      "status": "active"
+    }
+  ]
+}

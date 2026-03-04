@@ -1,0 +1,22 @@
+{
+  "trace_id": "TRC-20260304-00021",
+  "decision": "match",
+  "recommended": {
+    "pqr_id": "PQR-001",
+    "welder_id": "WELDER-001",
+    "consumable_batch_ids": ["B-001"],
+    "score": {
+      "pqr_score": 1.0,
+      "welder_score": 1.0,
+      "consumable_score": 1.0,
+      "final_score": 1.0
+    }
+  },
+  "alternatives": [],
+  "hard_conflicts": [],
+  "inventory_alerts": [],
+  "rule_package": {
+    "standard_code": "asme_ix",
+    "version": "0.1.0"
+  }
+}
