@@ -3,6 +3,12 @@ mod commands;
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            commands::upsert_project,
+            commands::get_project,
+            commands::list_projects,
+            commands::archive_project,
+            commands::pick_drawing_files,
+            commands::read_drawing_preview,
             commands::run_match,
             commands::run_parse,
             commands::upsert_pqr,

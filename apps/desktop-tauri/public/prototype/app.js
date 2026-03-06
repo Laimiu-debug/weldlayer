@@ -1,8 +1,18 @@
-const THICKNESS_DIFF_THRESHOLD = 3;
+﻿const THICKNESS_DIFF_THRESHOLD = 3;
 const PROTOTYPE_DB_PATH = "weldlayer.db";
 const PROTOTYPE_PROJECT_ID = "PRJ-PROTOTYPE-001";
 const MASTER_DATA_SYNC_LIMIT = 1000;
 const EXECUTION_HISTORY_LIMIT = 12;
+const PARSE_HISTORY_LIMIT = 16;
+const DEFAULT_PROJECT = {
+  id: PROTOTYPE_PROJECT_ID,
+  name: "压力管道改造 A-26",
+  company: "Laimiu Fabrication",
+  drawingType: "PDF + DWG",
+  standard: "ASME_IX",
+  archivedAt: 0,
+  updatedAt: Math.floor(Date.now() / 1000)
+};
 const MASTER_BATCH_ROWS = [
   {
     batch_no: "B-001",
@@ -23,10 +33,23 @@ const MASTER_BATCH_ROWS = [
     status: "active"
   }
 ];
+const PARSE_ALLOWED_FILE_TYPES = new Set(["pdf", "dwg"]);
+const DEFAULT_PARSE_OPTIONS = {
+  detectWeldSymbols: true,
+  detectSections: true,
+  language: "zh-CN"
+};
+const SAMPLE_PARSE_FILES = [
+  { path: "pressure_line_01.pdf", fileType: "pdf", source: "sample" },
+  { path: "vessel_joint_revB.dwg", fileType: "dwg", source: "sample" },
+  { path: "support_branch_03.dwg", fileType: "dwg", source: "sample" }
+];
 
 const appState = {
   view: "project",
-  standard: "ASME_IX",
+  standard: DEFAULT_PROJECT.standard,
+  currentProject: { ...DEFAULT_PROJECT },
+  projects: [{ ...DEFAULT_PROJECT }],
   seamRows: [
     { id: "W-001", matA: "P-No.1", matB: "P-No.1", thkA: 16, thkB: 16, pos: "2G", symbol: "BW", conf: 0.92, status: "confirmed" },
     { id: "W-002", matA: "P-No.1", matB: "P-No.8", thkA: 38, thkB: 25, pos: "5G", symbol: "BW", conf: 0.65, status: "pending" },
@@ -142,7 +165,31 @@ const appState = {
   baselineComparison: null,
   baselineImpact: null,
   selectedMatchTraceId: "",
+  parseQueue: [],
+  parseLogs: [],
+  parseResult: null,
+  parseOptions: { ...DEFAULT_PARSE_OPTIONS },
+  parseFilters: {
+    status: "all",
+    review: "all"
+  },
+  parseHistory: [],
+  selectedParseHistoryId: "",
+  parseSelectedQueueId: "",
+  parseSelectedSeamId: "",
+  parseSelectedCandidateId: "",
+  parseBusy: false,
   parseProgress: 0,
+  parsePreviewMode: "browse",
+  parsePreviewZoom: 100,
+  parsePreviewRotation: 0,
+  parsePreviewExpanded: false,
+  parsePreviewPageIndex: 0,
+  parsePreviewPageCount: 0,
+  parsePreviewDrag: null,
+  parsePreviewSuppressClickUntil: 0,
+  parsePreviewAddSeamMode: false,
+  parseShortcutPanelVisible: false,
   templateVersion: [1, 0, 0],
   traceId: "TRC-20260304-00017",
   licenseStatus: "NotActivated",
@@ -164,6 +211,15 @@ const appState = {
     sortCol: "exp",
     sortDir: "asc"
   }
+};
+
+const parsePreviewRuntime = {
+  pdfJsPromise: null,
+  documentKey: "",
+  documentProxy: null,
+  loadingTask: null,
+  renderTask: null,
+  requestToken: 0
 };
 
 const viewMeta = {
@@ -232,6 +288,104 @@ viewMeta.inventory = {
 
 const menuButtons = [...document.querySelectorAll(".menu-item")];
 const views = [...document.querySelectorAll(".view")];
+const projectForm = document.querySelector("#project-form");
+const projectFormMode = document.querySelector("#project-form-mode");
+const projectCurrentId = document.querySelector("#project-current-id");
+const projectCurrentName = document.querySelector("#project-current-name");
+const projectCurrentSummary = document.querySelector("#project-current-summary");
+const projectCurrentPills = document.querySelector("#project-current-pills");
+const projectRecentBody = document.querySelector("#project-recent-body");
+const projectRecentCaption = document.querySelector("#project-recent-caption");
+const projectLastScore = document.querySelector("#project-last-score");
+const projectRefreshBtn = document.querySelector("#btn-project-refresh");
+const projectResetBtn = document.querySelector("#btn-project-reset");
+const projectOpenImportBtn = document.querySelector("#btn-project-open-import");
+const projectArchiveCurrentBtn = document.querySelector("#btn-project-archive-current");
+const parseDropzone = document.querySelector("#parse-dropzone");
+const parseFileInput = document.querySelector("#parse-file-input");
+const parsePickFilesBtn = document.querySelector("#btn-pick-parse-files");
+const parseAddSampleBtn = document.querySelector("#btn-parse-add-sample");
+const parseClearQueueBtn = document.querySelector("#btn-clear-parse-queue");
+const parseRunBtn = document.querySelector("#btn-parse");
+const parseRetryBtn = document.querySelector("#btn-retry-parse");
+const parseAcceptAllBtn = document.querySelector("#btn-parse-accept-all");
+const parseQueueBody = document.querySelector("#parse-queue-body");
+const parseQueueCaption = document.querySelector("#parse-queue-caption");
+const parseFilterStatus = document.querySelector("#parse-filter-status");
+const parseFilterReview = document.querySelector("#parse-filter-review");
+const parseFilterResetBtn = document.querySelector("#btn-parse-filter-reset");
+const parseProgressBar = document.querySelector("#parse-progress-bar");
+const parseProgressLabel = document.querySelector("#parse-progress-label");
+const parseStatusLabel = document.querySelector("#parse-status");
+const parseSummaryLabel = document.querySelector("#parse-summary");
+const parsePreviewCaption = document.querySelector("#parse-preview-caption");
+const parsePreviewEmpty = document.querySelector("#parse-preview-empty");
+const parsePreviewContent = document.querySelector("#parse-preview-content");
+const parsePreviewBody = document.querySelector("#parse-preview-body");
+const parsePreviewCandidateBody = document.querySelector("#parse-preview-candidate-body");
+const parseErrorList = document.querySelector("#parse-error-list");
+const parseLogPanel = document.querySelector("#parse-log");
+const parseOptionsForm = document.querySelector("#parse-options-form");
+const parseDetectSymbolsInput = document.querySelector("#parse-option-detect-symbols");
+const parseDetectSectionsInput = document.querySelector("#parse-option-detect-sections");
+const parseLanguageSelect = document.querySelector("#parse-option-language");
+const parseLoadSeamsBtn = document.querySelector("#btn-parse-load-seams");
+const parseSelectedTitle = document.querySelector("#parse-selected-title");
+const parseSelectedMeta = document.querySelector("#parse-selected-meta");
+const parseDetailGrid = document.querySelector("#parse-detail-grid");
+const parseSelectPrevBtn = document.querySelector("#btn-parse-select-prev");
+const parseSelectNextBtn = document.querySelector("#btn-parse-select-next");
+const parsePreviewExpandBtn = document.querySelector("#btn-parse-preview-expand");
+const parseAddSeamBtn = document.querySelector("#btn-parse-add-seam");
+const parseDeleteSeamBtn = document.querySelector("#btn-parse-delete-seam");
+const parseAcceptSelectedBtn = document.querySelector("#btn-parse-accept-selected");
+const parseResetSelectedBtn = document.querySelector("#btn-parse-reset-selected");
+const parseFlagSeamBtn = document.querySelector("#btn-parse-flag-seam");
+const parseUnflagSeamBtn = document.querySelector("#btn-parse-unflag-seam");
+const parseLoadAcceptedBtn = document.querySelector("#btn-parse-load-accepted");
+const parseLoadSelectedBtn = document.querySelector("#btn-parse-load-selected");
+const parsePreviewCanvas = document.querySelector("#parse-preview-canvas");
+const parsePreviewScroll = document.querySelector("#parse-preview-scroll");
+const parsePreviewDocument = document.querySelector("#parse-preview-document");
+const parsePreviewSurface = document.querySelector("#parse-preview-surface");
+const parsePreviewCanvasEmpty = document.querySelector("#parse-preview-canvas-empty");
+const parsePreviewHelp = document.querySelector("#parse-preview-help");
+const parsePreviewShortcuts = document.querySelector("#parse-preview-shortcuts");
+const parsePreviewHotspots = document.querySelector("#parse-preview-hotspots");
+const parsePreviewModeBtn = document.querySelector("#btn-parse-preview-mode");
+const parseShortcutsBtn = document.querySelector("#btn-parse-shortcuts");
+const parseShortcutPanel = document.querySelector("#parse-shortcut-panel");
+const parseShortcutsCloseBtn = document.querySelector("#btn-parse-shortcuts-close");
+const parsePreviewRotateLeftBtn = document.querySelector("#btn-parse-preview-rotate-left");
+const parsePreviewRotateRightBtn = document.querySelector("#btn-parse-preview-rotate-right");
+const parsePreviewZoomOutBtn = document.querySelector("#btn-parse-preview-zoom-out");
+const parsePreviewZoomResetBtn = document.querySelector("#btn-parse-preview-zoom-reset");
+const parsePreviewZoomInBtn = document.querySelector("#btn-parse-preview-zoom-in");
+const parseFileStatus = document.querySelector("#parse-file-status");
+const parseFileSeamCount = document.querySelector("#parse-file-seam-count");
+const parseFileErrorCount = document.querySelector("#parse-file-error-count");
+const parseFileCandidateCount = document.querySelector("#parse-file-candidate-count");
+const parseFileSource = document.querySelector("#parse-file-source");
+const parseFileSeamBody = document.querySelector("#parse-file-seam-body");
+const parseFileCandidateBody = document.querySelector("#parse-file-candidate-body");
+const parseFileErrorList = document.querySelector("#parse-file-error-list");
+const parseHistoryCaption = document.querySelector("#parse-history-caption");
+const parseHistoryRefreshBtn = document.querySelector("#btn-parse-history-refresh");
+const parseHistoryBody = document.querySelector("#parse-history-body");
+const parseHistoryDetailEmpty = document.querySelector("#parse-history-detail-empty");
+const parseHistoryDetailContent = document.querySelector("#parse-history-detail-content");
+const parseHistoryDetailTitle = document.querySelector("#parse-history-detail-title");
+const parseHistoryDetailMeta = document.querySelector("#parse-history-detail-meta");
+const parseHistoryDetailPills = document.querySelector("#parse-history-detail-pills");
+const parseHistoryFileList = document.querySelector("#parse-history-file-list");
+const parseQuickModal = document.querySelector("#parse-quick-modal");
+const parseQuickBackdrop = document.querySelector("#parse-quick-backdrop");
+const parseQuickTitle = document.querySelector("#parse-quick-title");
+const parseQuickMeta = document.querySelector("#parse-quick-meta");
+const parseQuickBody = document.querySelector("#parse-quick-body");
+const parseQuickCloseBtn = document.querySelector("#btn-parse-quick-close");
+const parseQuickCancelBtn = document.querySelector("#btn-parse-quick-cancel");
+const parseQuickSaveBtn = document.querySelector("#btn-parse-quick-save");
 const seamBody = document.querySelector("#seam-table tbody");
 const seamImportInput = document.querySelector("#seam-import-file");
 const seamImportPreview = document.querySelector("#seam-import-preview");
@@ -301,7 +455,9 @@ const uiState = {
   pendingSeamImportResult: null,
   pendingSeamImportFileName: "",
   locatedRowTimer: 0,
-  masterFocus: null
+  parseProgressTimer: 0,
+  masterFocus: null,
+  parseQuickEdit: null
 };
 
 function statusTag(text, type) {
@@ -2677,7 +2833,7 @@ function buildBaselineFromState(traceId) {
   };
   return {
     traceId: report.traceId,
-    projectId: report.projectId || PROTOTYPE_PROJECT_ID,
+    projectId: report.projectId || getCurrentProjectId(),
     label: `BASELINE-${report.traceId}`,
     decision: report.decision,
     rulePackageVersion: report.rulePackageVersion,
@@ -2718,7 +2874,7 @@ async function freezeSelectedMatchAsBaseline() {
       const item = JSON.parse(payload);
       baseline = {
         traceId: String(item.trace_id || traceId),
-        projectId: String(item.project_id || PROTOTYPE_PROJECT_ID),
+        projectId: String(item.project_id || getCurrentProjectId()),
         label: String(item.baseline_label || `BASELINE-${traceId}`),
         decision: String(item.decision || "partial"),
         rulePackageVersion: String(item.rule_package_version || "-"),
@@ -2815,6 +2971,9 @@ function renderAuditLogs() {
 
 function setView(viewKey) {
   appState.view = viewKey;
+  if (viewKey !== "import") {
+    closeParseQuickEditModal({ silent: true });
+  }
   menuButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.view === viewKey));
   views.forEach((panel) => panel.classList.toggle("is-visible", panel.dataset.viewPanel === viewKey));
   const meta = viewMeta[viewKey];
@@ -2824,47 +2983,2754 @@ function setView(viewKey) {
   document.querySelector("#detail-content").textContent = meta.detailText;
 }
 
-function appendLog(text) {
-  const panel = document.querySelector("#parse-log");
-  const p = document.createElement("p");
-  p.textContent = `[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] ${text}`;
-  panel.appendChild(p);
-  panel.scrollTop = panel.scrollHeight;
+function isTauriRuntime() {
+  return typeof window.__TAURI_INTERNALS__?.invoke === "function";
+}
+
+function basenameFromPath(value) {
+  return String(value || "")
+    .split(/[\\/]/)
+    .filter(Boolean)
+    .pop() || "";
+}
+
+function normalizeParseFileType(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/^\./, "");
+  return PARSE_ALLOWED_FILE_TYPES.has(normalized) ? normalized : "";
+}
+
+function inferParseFileType(value) {
+  const fileName = basenameFromPath(value);
+  const ext = fileName.includes(".") ? fileName.split(".").pop() : "";
+  return normalizeParseFileType(ext);
+}
+
+function buildParseQueueId() {
+  return `PF-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
+function buildParseQueueKey(item) {
+  return `${normalizeParseFileType(item?.fileType || inferParseFileType(item?.path || item?.fileName))}|${String(
+    item?.path || item?.fileName || ""
+  )
+    .trim()
+    .toLowerCase()}`;
+}
+
+function buildParseQueueItem(input = {}) {
+  const path = String(input.path || input.fileName || "").trim();
+  const fileName = String(input.fileName || basenameFromPath(path) || "unnamed").trim();
+  const fileType = normalizeParseFileType(input.fileType || inferParseFileType(path || fileName));
+  const previewUrl = String(input.previewUrl || "");
+  return {
+    id: String(input.id || buildParseQueueId()),
+    path,
+    fileName,
+    fileType,
+    source: String(input.source || "manual"),
+    virtual: Boolean(input.virtual),
+    sizeBytes: Number(input.sizeBytes) || 0,
+    previewUrl,
+    previewMimeType: String(input.previewMimeType || ""),
+    previewLoadState: String(input.previewLoadState || (previewUrl ? "ready" : "idle")),
+    previewError: String(input.previewError || ""),
+    status: String(input.status || "ready"),
+    progress: Number(input.progress) || 0,
+    errorCode: String(input.errorCode || ""),
+    errorMessage: String(input.errorMessage || ""),
+    reviewStatus: String(input.reviewStatus || "pending"),
+    seams: Array.isArray(input.seams) ? input.seams.map((item) => normalizeParseSeamItem(item)) : [],
+    candidates: Array.isArray(input.candidates) ? input.candidates.map((item) => normalizeParseCandidateItem(item)) : []
+  };
+}
+
+function formatBytes(value) {
+  const size = Number(value) || 0;
+  if (size <= 0) return "-";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function resolveParsePreviewUrl(item) {
+  if (!item) return "";
+  if (item.previewUrl) return item.previewUrl;
+  return "";
+}
+
+function getParsePreviewModeMeta() {
+  return appState.parsePreviewMode === "annotate"
+    ? {
+        label: "标注模式",
+        buttonText: "切换到浏览模式",
+        helpText: "当前处于标注模式。可直接拖动标注重定位，或选中目标后在图纸空白处双击落点。"
+      }
+    : {
+        label: "浏览模式",
+        buttonText: "切换到标注模式",
+        helpText: "当前处于浏览模式。可直接滚动图纸，并用缩放按钮查看细节。"
+      };
+}
+
+function getParsePreviewExpandMeta() {
+  return appState.parsePreviewExpanded
+    ? { buttonText: "恢复标准布局", label: "扩展预览" }
+    : { buttonText: "放大预览", label: "标准布局" };
+}
+
+function normalizeParsePreviewRotation(value) {
+  const numeric = Number(value) || 0;
+  const normalized = ((numeric % 360) + 360) % 360;
+  return [0, 90, 180, 270].includes(normalized) ? normalized : 0;
+}
+
+function rotatePreviewPoint(point) {
+  const x = Math.max(0, Math.min(1, Number(point?.x) || 0));
+  const y = Math.max(0, Math.min(1, Number(point?.y) || 0));
+  switch (normalizeParsePreviewRotation(appState.parsePreviewRotation)) {
+    case 90:
+      return { x: 1 - y, y: x };
+    case 180:
+      return { x: 1 - x, y: 1 - y };
+    case 270:
+      return { x: y, y: 1 - x };
+    default:
+      return { x, y };
+  }
+}
+
+function unrotatePreviewPoint(point) {
+  const x = Math.max(0, Math.min(1, Number(point?.x) || 0));
+  const y = Math.max(0, Math.min(1, Number(point?.y) || 0));
+  switch (normalizeParsePreviewRotation(appState.parsePreviewRotation)) {
+    case 90:
+      return { x: y, y: 1 - x };
+    case 180:
+      return { x: 1 - x, y: 1 - y };
+    case 270:
+      return { x: 1 - y, y: x };
+    default:
+      return { x, y };
+  }
+}
+
+function clampParsePreviewZoom(value) {
+  const numeric = Number(value) || 100;
+  return Math.max(50, Math.min(300, Math.round(numeric / 10) * 10));
+}
+
+function formatParsePreviewZoom() {
+  return `${clampParsePreviewZoom(appState.parsePreviewZoom)}%`;
+}
+
+async function getPdfJsLib() {
+  if (!parsePreviewRuntime.pdfJsPromise) {
+    parsePreviewRuntime.pdfJsPromise = import("./vendor/pdf.mjs")
+      .then((module) => {
+        module.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.mjs", window.location.href).href;
+        return module;
+      })
+      .catch((error) => {
+        parsePreviewRuntime.pdfJsPromise = null;
+        throw error;
+      });
+  }
+  return parsePreviewRuntime.pdfJsPromise;
+}
+
+function getParsePreviewDocumentKey(item, previewUrl) {
+  return `${String(item?.id || "")}::${String(previewUrl || "")}`;
+}
+
+function getSelectedPreviewAnchorPageIndex(item) {
+  const selectedSeamId = String(appState.parseSelectedSeamId || "").trim();
+  if (selectedSeamId) {
+    const seam = (item?.seams || []).find((entry) => String(entry?.weld_id || "") === selectedSeamId);
+    if (Number.isFinite(Number(seam?.anchor_bbox?.page_index))) {
+      return Math.max(0, Number(seam.anchor_bbox.page_index));
+    }
+  }
+  const selectedCandidateId = String(appState.parseSelectedCandidateId || "").trim();
+  if (selectedCandidateId) {
+    const candidate = (item?.candidates || []).find((entry) => String(entry?.candidate_id || "") === selectedCandidateId);
+    if (Number.isFinite(Number(candidate?.anchor_bbox?.page_index))) {
+      return Math.max(0, Number(candidate.anchor_bbox.page_index));
+    }
+  }
+  return Math.max(0, Number(appState.parsePreviewPageIndex) || 0);
+}
+
+function getPreviewAnchorPageIndex(anchor) {
+  const pageIndex = Number(anchor?.page_index);
+  return Number.isFinite(pageIndex) ? Math.max(0, pageIndex) : 0;
+}
+
+function isAnchorVisibleOnPreviewPage(anchor) {
+  return getPreviewAnchorPageIndex(anchor) === Math.max(0, Number(appState.parsePreviewPageIndex) || 0);
+}
+
+async function clearParsePreviewDocument() {
+  if (parsePreviewRuntime.renderTask) {
+    try {
+      parsePreviewRuntime.renderTask.cancel();
+    } catch (_error) {
+      // Ignore canceled render tasks.
+    }
+    parsePreviewRuntime.renderTask = null;
+  }
+  if (parsePreviewRuntime.loadingTask) {
+    try {
+      await parsePreviewRuntime.loadingTask.destroy();
+    } catch (_error) {
+      // Ignore loading task cleanup failures.
+    }
+    parsePreviewRuntime.loadingTask = null;
+  }
+  if (parsePreviewRuntime.documentProxy) {
+    try {
+      await parsePreviewRuntime.documentProxy.destroy();
+    } catch (_error) {
+      // Ignore document cleanup failures.
+    }
+  }
+  parsePreviewRuntime.documentKey = "";
+  parsePreviewRuntime.documentProxy = null;
+  appState.parsePreviewPageCount = 0;
+  if (parsePreviewDocument) {
+    parsePreviewDocument.classList.add("hidden");
+    parsePreviewDocument.style.width = "";
+    parsePreviewDocument.style.height = "";
+  }
+  if (parsePreviewSurface) {
+    parsePreviewSurface.classList.add("hidden");
+    parsePreviewSurface.width = 0;
+    parsePreviewSurface.height = 0;
+    parsePreviewSurface.style.width = "";
+    parsePreviewSurface.style.height = "";
+  }
+  if (parsePreviewHotspots) {
+    parsePreviewHotspots.style.width = "";
+    parsePreviewHotspots.style.height = "";
+    parsePreviewHotspots.innerHTML = "";
+  }
+}
+
+async function ensureParsePdfDocument(item, previewUrl) {
+  const key = getParsePreviewDocumentKey(item, previewUrl);
+  if (parsePreviewRuntime.documentProxy && parsePreviewRuntime.documentKey === key) {
+    return parsePreviewRuntime.documentProxy;
+  }
+
+  await clearParsePreviewDocument();
+  const pdfjs = await getPdfJsLib();
+  const loadingTask = pdfjs.getDocument({
+    url: previewUrl,
+    isEvalSupported: false
+  });
+  parsePreviewRuntime.loadingTask = loadingTask;
+  const documentProxy = await loadingTask.promise;
+  parsePreviewRuntime.loadingTask = null;
+  parsePreviewRuntime.documentKey = key;
+  parsePreviewRuntime.documentProxy = documentProxy;
+  appState.parsePreviewPageCount = Number(documentProxy.numPages) || 0;
+  return documentProxy;
+}
+
+async function renderParsePdfPreview(item, previewUrl) {
+  if (!parsePreviewDocument || !parsePreviewSurface || !parsePreviewHotspots) return;
+  const requestToken = ++parsePreviewRuntime.requestToken;
+  const documentProxy = await ensureParsePdfDocument(item, previewUrl);
+  if (requestToken !== parsePreviewRuntime.requestToken) return;
+
+  const pageCount = Math.max(1, Number(documentProxy.numPages) || 1);
+  const targetPageIndex = Math.max(0, Math.min(pageCount - 1, getSelectedPreviewAnchorPageIndex(item)));
+  appState.parsePreviewPageIndex = targetPageIndex;
+  appState.parsePreviewPageCount = pageCount;
+
+  const page = await documentProxy.getPage(targetPageIndex + 1);
+  if (requestToken !== parsePreviewRuntime.requestToken) return;
+
+  const rotation = normalizeParsePreviewRotation(appState.parsePreviewRotation);
+  const scale = Math.max(0.4, clampParsePreviewZoom(appState.parsePreviewZoom) / 100);
+  const viewport = page.getViewport({ scale, rotation });
+  const outputScale = window.devicePixelRatio || 1;
+  const canvas = parsePreviewSurface;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) throw new Error("canvas context unavailable");
+
+  canvas.classList.remove("hidden");
+  canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
+  canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
+  canvas.style.width = `${viewport.width}px`;
+  canvas.style.height = `${viewport.height}px`;
+  parsePreviewDocument.style.width = `${viewport.width}px`;
+  parsePreviewDocument.style.height = `${viewport.height}px`;
+  parsePreviewHotspots.style.width = `${viewport.width}px`;
+  parsePreviewHotspots.style.height = `${viewport.height}px`;
+  context.setTransform(outputScale, 0, 0, outputScale, 0, 0);
+  context.clearRect(0, 0, viewport.width, viewport.height);
+
+  if (parsePreviewRuntime.renderTask) {
+    try {
+      parsePreviewRuntime.renderTask.cancel();
+    } catch (_error) {
+      // Ignore canceled render tasks.
+    }
+  }
+
+  const renderTask = page.render({
+    canvasContext: context,
+    viewport
+  });
+  parsePreviewRuntime.renderTask = renderTask;
+  try {
+    await renderTask.promise;
+  } catch (error) {
+    if (error?.name === "RenderingCancelledException") {
+      return;
+    }
+    throw error;
+  }
+  if (requestToken !== parsePreviewRuntime.requestToken) return;
+  parsePreviewRuntime.renderTask = null;
+  parsePreviewDocument.classList.remove("hidden");
+  if (parsePreviewCanvasEmpty) {
+    parsePreviewCanvasEmpty.classList.add("hidden");
+  }
+}
+
+function isTypingTarget(target) {
+  const node = target instanceof HTMLElement ? target : null;
+  if (!node) return false;
+  if (node.isContentEditable) return true;
+  const tagName = String(node.tagName || "").toUpperCase();
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(tagName);
+}
+
+function getNextParseManualSeamId(item) {
+  const existing = new Set((Array.isArray(item?.seams) ? item.seams : []).map((seam) => String(seam?.weld_id || "").trim()));
+  let index = 1;
+  while (existing.has(`W-MANUAL-${String(index).padStart(3, "0")}`)) {
+    index += 1;
+  }
+  return `W-MANUAL-${String(index).padStart(3, "0")}`;
+}
+
+function decodeBase64ToBytes(value) {
+  const encoded = String(value || "").trim();
+  if (!encoded) return new Uint8Array();
+  const binary = window.atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function updateParseQueueItem(itemId, updater) {
+  let changed = false;
+  appState.parseQueue = appState.parseQueue.map((item) => {
+    if (item.id !== itemId) return item;
+    changed = true;
+    return typeof updater === "function" ? updater(item) : { ...item, ...updater };
+  });
+  return changed;
+}
+
+async function ensureParsePreviewAsset(item) {
+  const targetId = String(item?.id || "").trim();
+  if (!targetId) return;
+  const target = appState.parseQueue.find((row) => row.id === targetId);
+  if (
+    !target ||
+    target.fileType !== "pdf" ||
+    target.virtual ||
+    !isTauriRuntime() ||
+    !target.path ||
+    target.previewUrl ||
+    target.previewLoadState === "loading"
+  ) {
+    return;
+  }
+
+  updateParseQueueItem(targetId, {
+    previewLoadState: "loading",
+    previewError: ""
+  });
+  renderParseSelectedFilePanel();
+
+  try {
+    const payload = await invokeTauriCommand("read_drawing_preview", {
+      path: target.path
+    });
+    const decoded = JSON.parse(payload);
+    const bytes = decodeBase64ToBytes(decoded?.base64);
+    if (!bytes.length) {
+      throw new Error("empty preview payload");
+    }
+    const mimeType = String(decoded?.mime_type || "application/pdf");
+    const previewUrl = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+    let applied = false;
+    appState.parseQueue = appState.parseQueue.map((entry) => {
+      if (entry.id !== targetId) return entry;
+      applied = true;
+      revokeParsePreviewUrl(entry);
+      return {
+        ...entry,
+        previewUrl,
+        previewMimeType: mimeType,
+        previewLoadState: "ready",
+        previewError: ""
+      };
+    });
+    if (!applied) {
+      URL.revokeObjectURL(previewUrl);
+    }
+  } catch (error) {
+    updateParseQueueItem(targetId, {
+      previewLoadState: "failed",
+      previewError: String(error)
+    });
+    addEvent(`图纸预览加载失败: ${basenameFromPath(target.path) || targetId}`);
+  }
+
+  renderParseSelectedFilePanel();
+}
+
+function revokeParsePreviewUrl(item) {
+  const url = String(item?.previewUrl || "");
+  if (!url || !url.startsWith("blob:")) return;
+  try {
+    URL.revokeObjectURL(url);
+  } catch (_error) {
+    // Ignore object URL cleanup failures.
+  }
+}
+
+function releaseParsePreviewUrls(queue = []) {
+  (Array.isArray(queue) ? queue : []).forEach((item) => revokeParsePreviewUrl(item));
+}
+
+function getFallbackHotspotPosition(index, total = 1, kind = "seam") {
+  const safeTotal = Math.max(1, Number(total) || 1);
+  const column = index % Math.min(4, safeTotal);
+  const row = Math.floor(index / 4);
+  const offset = kind === "candidate" ? 0.04 : 0;
+  return {
+    x: Math.min(0.88, 0.18 + column * 0.18 + offset),
+    y: Math.min(0.84, 0.24 + row * 0.16 + offset),
+    w: 0.12,
+    h: 0.08,
+    page_index: 0
+  };
+}
+
+function resolveHotspotAnchor(anchor, fallbackIndex, fallbackTotal, kind = "seam") {
+  return normalizePreviewAnchor(anchor) || getFallbackHotspotPosition(fallbackIndex, fallbackTotal, kind);
+}
+
+function getAnchorStyle(anchor, fallbackIndex, fallbackTotal, kind = "seam") {
+  const target = rotatePreviewPoint(resolveHotspotAnchor(anchor, fallbackIndex, fallbackTotal, kind));
+  return {
+    left: `${Math.max(0, Math.min(100, target.x * 100))}%`,
+    top: `${Math.max(0, Math.min(100, target.y * 100))}%`
+  };
+}
+
+function getHotspotPlacementClass(anchor, fallbackIndex, fallbackTotal, kind = "seam") {
+  const target = rotatePreviewPoint(resolveHotspotAnchor(anchor, fallbackIndex, fallbackTotal, kind));
+  const horizontal = target.x > 0.76 ? "left" : "right";
+  const vertical = target.y < 0.18 ? "below" : "above";
+  return `is-place-${vertical}-${horizontal}`;
+}
+
+function getParseSelectedAnchorSeed(kind, itemId) {
+  const selectedItem = getSelectedParseQueueItem();
+  if (!selectedItem || !itemId) return null;
+  if (kind === "seam") {
+    const seam = (selectedItem.seams || []).find((entry) => String(entry.weld_id || "") === String(itemId));
+    return normalizePreviewAnchor(seam?.anchor_bbox);
+  }
+  if (kind === "candidate") {
+    const candidate = (selectedItem.candidates || []).find((entry) => String(entry.candidate_id || "") === String(itemId));
+    return normalizePreviewAnchor(candidate?.anchor_bbox);
+  }
+  return null;
+}
+
+function setParseItemAnchorById(kind, itemId, anchor, options = {}) {
+  const { silent = false, render = true, announce = true } = options;
+  const normalizedAnchor = normalizePreviewAnchor(anchor);
+  if (!normalizedAnchor) return false;
+  const selectedItem = getSelectedParseQueueItem();
+  if (!selectedItem) return false;
+  const targetId = String(itemId || "").trim();
+  if (!targetId) return false;
+  let changed = false;
+
+  appState.parseQueue = appState.parseQueue.map((item) => {
+    if (item.id !== selectedItem.id) return item;
+    if (kind === "seam") {
+      return {
+        ...item,
+        seams: (item.seams || []).map((seam) => {
+          if (String(seam.weld_id || "") !== targetId) return seam;
+          changed = true;
+          return { ...seam, anchor_bbox: normalizedAnchor };
+        })
+      };
+    }
+    if (kind === "candidate") {
+      return {
+        ...item,
+        candidates: (item.candidates || []).map((candidate) => {
+          if (String(candidate.candidate_id || "") !== targetId) return candidate;
+          changed = true;
+          return { ...candidate, anchor_bbox: normalizedAnchor };
+        })
+      };
+    }
+    return item;
+  });
+
+  if (!changed) return false;
+  if (render) renderParseSelectedFilePanel();
+  if (!silent && announce) {
+    addEvent(kind === "seam" ? `已标注焊缝位置: ${targetId}` : `已标注候选位置: ${targetId}`);
+  }
+  return true;
+}
+
+function normalizeParseSeamReviewStatus(status, confidence = 0) {
+  const value = String(status || "").trim().toLowerCase();
+  if (["confirmed", "changed", "pending", "uncertain"].includes(value)) {
+    return value;
+  }
+  return Number(confidence) < 0.75 ? "uncertain" : "pending";
+}
+
+function normalizeParseSeamItem(item = {}) {
+  const confidence = Number(item.confidence_score) || 0;
+  return {
+    ...item,
+    weld_id: String(item.weld_id || ""),
+    review_status: normalizeParseSeamReviewStatus(item.review_status, confidence),
+    anchor_bbox: normalizePreviewAnchor(item.anchor_bbox)
+  };
+}
+
+function getParseSeamReviewMeta(seam) {
+  const reviewStatus = normalizeParseSeamReviewStatus(seam?.review_status, seam?.confidence_score);
+  if (reviewStatus === "uncertain") {
+    return { label: "可疑", type: "danger", hotspotClass: "is-warn" };
+  }
+  if (reviewStatus === "confirmed") {
+    return { label: "已确认", type: "ok", hotspotClass: "" };
+  }
+  if (reviewStatus === "changed") {
+    return { label: "已变更", type: "warn", hotspotClass: "is-warn" };
+  }
+  return { label: "待确认", type: "warn", hotspotClass: "" };
+}
+
+function countFlaggedParseSeams(item) {
+  return (Array.isArray(item?.seams) ? item.seams : []).filter(
+    (seam) => normalizeParseSeamReviewStatus(seam?.review_status, seam?.confidence_score) === "uncertain"
+  ).length;
+}
+
+function normalizeParseCandidateReviewStatus(status, confidence = 0) {
+  const value = String(status || "").trim().toLowerCase();
+  if (["pending", "accepted", "rejected", "uncertain", "merged"].includes(value)) {
+    return value;
+  }
+  return Number(confidence) < 0.75 ? "uncertain" : "pending";
+}
+
+function normalizeParseCandidateItem(item = {}) {
+  const confidence = Number(item.confidence_score) || 0;
+  return {
+    ...item,
+    candidate_id: String(item.candidate_id || ""),
+    draw_ref: String(item.draw_ref || ""),
+    candidate_type: String(item.candidate_type || item.joint_geometry || "unknown"),
+    joint_geometry: String(item.joint_geometry || item.candidate_type || "unknown"),
+    material_guess_a: String(item.material_guess_a || ""),
+    material_guess_b: String(item.material_guess_b || item.material_guess_a || ""),
+    position_guess: String(item.position_guess || ""),
+    weld_symbol_guess: String(item.weld_symbol_guess || ""),
+    review_status: normalizeParseCandidateReviewStatus(item.review_status, confidence),
+    anchor_bbox: normalizePreviewAnchor(item.anchor_bbox),
+    evidence: Array.isArray(item.evidence) ? item.evidence : []
+  };
+}
+
+function normalizePreviewAnchor(anchor) {
+  if (!anchor || typeof anchor !== "object") return null;
+  const x = Number(anchor.x);
+  const y = Number(anchor.y);
+  const w = Number(anchor.w);
+  const h = Number(anchor.h);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return {
+    x,
+    y,
+    w: Number.isFinite(w) ? w : 0.08,
+    h: Number.isFinite(h) ? h : 0.06,
+    page_index: Number.isFinite(Number(anchor.page_index)) ? Number(anchor.page_index) : 0
+  };
+}
+
+function getParseCandidateReviewMeta(candidate) {
+  const reviewStatus = normalizeParseCandidateReviewStatus(candidate?.review_status, candidate?.confidence_score);
+  if (reviewStatus === "accepted") return { label: "已接受", type: "ok", hotspotClass: "is-candidate-accepted" };
+  if (reviewStatus === "rejected") return { label: "已忽略", type: "danger", hotspotClass: "is-error" };
+  if (reviewStatus === "uncertain") return { label: "可疑", type: "danger", hotspotClass: "is-candidate" };
+  if (reviewStatus === "merged") return { label: "已合并", type: "ok", hotspotClass: "is-candidate-accepted" };
+  return { label: "待确认", type: "warn", hotspotClass: "is-candidate" };
+}
+
+function formatParseCandidateGuess(candidate) {
+  const materials = [candidate?.material_guess_a, candidate?.material_guess_b].filter(Boolean).join(" / ") || "-";
+  const thicknessA = Number(candidate?.thickness_guess_a_mm);
+  const thicknessB = Number(candidate?.thickness_guess_b_mm);
+  const thickness = Number.isFinite(thicknessA)
+    ? Number.isFinite(thicknessB) && thicknessB !== thicknessA
+      ? `${thicknessA.toFixed(1)} / ${thicknessB.toFixed(1)}`
+      : thicknessA.toFixed(1)
+    : "-";
+  return `${materials} · ${thickness}mm · ${candidate?.weld_symbol_guess || "-"} · ${candidate?.position_guess || "-"}`;
+}
+
+function getSelectedParseQueueItem() {
+  const selectedId = String(appState.parseSelectedQueueId || "").trim();
+  if (selectedId) {
+    const found = appState.parseQueue.find((item) => item.id === selectedId);
+    if (found) return found;
+  }
+  return appState.parseQueue[0] || null;
+}
+
+function syncSelectedParseQueue() {
+  if (!appState.parseQueue.length) {
+    appState.parseSelectedQueueId = "";
+    appState.parseSelectedCandidateId = "";
+    return null;
+  }
+  const selected = getSelectedParseQueueItem();
+  appState.parseSelectedQueueId = selected?.id || "";
+  return selected;
+}
+
+function getParseQueueIndex(queueId) {
+  return appState.parseQueue.findIndex((item) => item.id === String(queueId || "").trim());
+}
+
+function setSelectedParseQueue(queueId, options = {}) {
+  const { silent = false } = options;
+  const target = appState.parseQueue.find((item) => item.id === String(queueId || "").trim());
+  if (!target) return false;
+  stopParseHotspotDrag({ announce: false });
+  closeParseQuickEditModal({ silent: true });
+  appState.parsePreviewAddSeamMode = false;
+  appState.parseShortcutPanelVisible = false;
+  appState.parsePreviewPageIndex = 0;
+  appState.parseSelectedQueueId = target.id;
+  syncSelectedParseSeam(target);
+  syncSelectedParseCandidate(target);
+  renderParseWorkspace();
+  if (!silent) {
+    addEvent(`已选中图纸 ${target.fileName || target.path}`);
+  }
+  return true;
+}
+
+function getParseErrorsForItem(item) {
+  if (!item) return [];
+  if (item.status !== "failed") return [];
+  return [
+    {
+      code: item.errorCode || "PARSE_FAILED",
+      message: item.errorMessage || "解析失败",
+      path: item.path || item.fileName
+    }
+  ];
+}
+
+function formatParseSourceLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "desktop") return "桌面端";
+  if (normalized === "browser") return "浏览器";
+  if (normalized === "drop") return "拖拽";
+  if (normalized === "sample") return "示例";
+  return normalized || "-";
+}
+
+function normalizeParseReviewStatusMeta(status) {
+  const value = String(status || "").trim().toLowerCase();
+  if (value === "accepted") return { label: "已接受", type: "ok" };
+  if (value === "rejected") return { label: "已忽略", type: "danger" };
+  return { label: "待确认", type: "warn" };
+}
+
+function setSelectedParseSeam(seamId, options = {}) {
+  const { silent = false } = options;
+  const selectedItem = getSelectedParseQueueItem();
+  const seams = Array.isArray(selectedItem?.seams) ? selectedItem.seams : [];
+  const target = seams.find((item) => String(item.weld_id || "") === String(seamId || "").trim());
+  appState.parseSelectedSeamId = target?.weld_id || "";
+  appState.parseSelectedCandidateId = "";
+  if (target?.anchor_bbox) {
+    appState.parsePreviewPageIndex = getPreviewAnchorPageIndex(target.anchor_bbox);
+  }
+  renderParseSelectedFilePanel();
+  if (target && !silent) {
+    addEvent(`已定位焊缝 ${target.weld_id}`);
+  }
+  return Boolean(target);
+}
+
+function setSelectedParseSeamReviewStatus(reviewStatus, options = {}) {
+  const { silent = false } = options;
+  const selectedItem = getSelectedParseQueueItem();
+  const selectedSeamId = String(appState.parseSelectedSeamId || "").trim();
+  if (!selectedItem || !selectedSeamId) return false;
+  let changed = false;
+  appState.parseQueue = appState.parseQueue.map((item) => {
+    if (item.id !== selectedItem.id) return item;
+    return {
+      ...item,
+      seams: (item.seams || []).map((seam) => {
+        if (String(seam.weld_id || "") !== selectedSeamId) return seam;
+        changed = true;
+        return {
+          ...seam,
+          review_status: normalizeParseSeamReviewStatus(reviewStatus, seam.confidence_score)
+        };
+      })
+    };
+  });
+  if (!changed) return false;
+  renderParseWorkspace();
+  if (!silent) {
+    const seam = getSelectedParseQueueItem()?.seams?.find((item) => String(item.weld_id || "") === selectedSeamId);
+    const seamMeta = getParseSeamReviewMeta(seam);
+    addEvent(`焊缝复核状态已更新: ${selectedSeamId} / ${seamMeta.label}`);
+  }
+  return true;
+}
+
+function setSelectedParseCandidate(candidateId, options = {}) {
+  const { silent = false } = options;
+  const selectedItem = getSelectedParseQueueItem();
+  const candidates = Array.isArray(selectedItem?.candidates) ? selectedItem.candidates : [];
+  const target = candidates.find((item) => String(item.candidate_id || "") === String(candidateId || "").trim());
+  appState.parseSelectedCandidateId = target?.candidate_id || "";
+  appState.parseSelectedSeamId = "";
+  if (target?.anchor_bbox) {
+    appState.parsePreviewPageIndex = getPreviewAnchorPageIndex(target.anchor_bbox);
+  }
+  renderParseSelectedFilePanel();
+  if (target && !silent) {
+    addEvent(`已定位候选焊缝 ${target.candidate_id}`);
+  }
+  return Boolean(target);
+}
+
+function syncSelectedParseCandidate(item) {
+  const candidates = Array.isArray(item?.candidates) ? item.candidates : [];
+  if (!candidates.length) {
+    appState.parseSelectedCandidateId = "";
+    return "";
+  }
+  const current = String(appState.parseSelectedCandidateId || "").trim();
+  if (current && candidates.some((candidate) => String(candidate.candidate_id || "") === current)) {
+    return current;
+  }
+  if (String(appState.parseSelectedSeamId || "").trim()) {
+    appState.parseSelectedCandidateId = "";
+    return "";
+  }
+  appState.parseSelectedCandidateId = String(candidates[0].candidate_id || "");
+  return appState.parseSelectedCandidateId;
+}
+
+function setParseCandidateReviewStatus(candidateId, reviewStatus, options = {}) {
+  const { silent = false } = options;
+  const selectedItem = getSelectedParseQueueItem();
+  const normalizedId = String(candidateId || "").trim();
+  if (!selectedItem || !normalizedId) return false;
+  let changed = false;
+  appState.parseQueue = appState.parseQueue.map((item) => {
+    if (item.id !== selectedItem.id) return item;
+    return {
+      ...item,
+      candidates: (item.candidates || []).map((candidate) => {
+        if (String(candidate.candidate_id || "") !== normalizedId) return candidate;
+        changed = true;
+        return {
+          ...candidate,
+          review_status: normalizeParseCandidateReviewStatus(reviewStatus, candidate.confidence_score)
+        };
+      })
+    };
+  });
+  if (!changed) return false;
+  appState.parseSelectedCandidateId = normalizedId;
+  renderParseWorkspace();
+  if (!silent) {
+    const candidate = getSelectedParseQueueItem()?.candidates?.find((item) => String(item.candidate_id || "") === normalizedId);
+    const meta = getParseCandidateReviewMeta(candidate);
+    addEvent(`候选焊缝状态已更新: ${normalizedId} / ${meta.label}`);
+  }
+  return true;
+}
+
+function getParseQuickEditTarget() {
+  const state = uiState.parseQuickEdit;
+  const selectedItem = getSelectedParseQueueItem();
+  if (!state || !selectedItem) return null;
+  const kind = String(state.kind || "").trim();
+  const itemId = String(state.itemId || "").trim();
+  if (kind === "seam") {
+    const target = (selectedItem.seams || []).find((item) => String(item?.weld_id || "") === itemId);
+    return target ? { kind, itemId, item: target, queueItem: selectedItem } : null;
+  }
+  if (kind === "candidate") {
+    const target = (selectedItem.candidates || []).find((item) => String(item?.candidate_id || "") === itemId);
+    return target ? { kind, itemId, item: target, queueItem: selectedItem } : null;
+  }
+  return null;
+}
+
+function closeParseQuickEditModal(options = {}) {
+  const { silent = false } = options;
+  if (!uiState.parseQuickEdit && parseQuickModal?.classList.contains("hidden")) return false;
+  uiState.parseQuickEdit = null;
+  if (parseQuickModal) parseQuickModal.classList.add("hidden");
+  if (parseQuickBody) parseQuickBody.innerHTML = "";
+  if (!silent) {
+    addEvent("已关闭焊缝快速查看");
+  }
+  return true;
+}
+
+function buildParseQuickReadOnlyField(label, value) {
+  return `
+    <div class="parse-quick-field">
+      <label>${label}</label>
+      <div class="parse-quick-readonly">${escapeHtml(value || "-")}</div>
+    </div>
+  `;
+}
+
+function buildParseQuickInputField(label, name, value, options = {}) {
+  const { type = "text", step = "", min = "", max = "", placeholder = "" } = options;
+  const stepAttr = step !== "" ? ` step="${escapeHtml(step)}"` : "";
+  const minAttr = min !== "" ? ` min="${escapeHtml(min)}"` : "";
+  const maxAttr = max !== "" ? ` max="${escapeHtml(max)}"` : "";
+  const placeholderAttr = placeholder ? ` placeholder="${escapeHtml(placeholder)}"` : "";
+  return `
+    <div class="parse-quick-field">
+      <label for="parse-quick-${escapeHtml(name)}">${label}</label>
+      <input id="parse-quick-${escapeHtml(name)}" data-parse-quick-field="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(
+        value ?? ""
+      )}"${stepAttr}${minAttr}${maxAttr}${placeholderAttr} />
+    </div>
+  `;
+}
+
+function buildParseQuickSelectField(label, name, value, options) {
+  const currentValue = String(value || "");
+  const optionHtml = (Array.isArray(options) ? options : [])
+    .map((option) => {
+      const optionValue = String(option.value || "");
+      const selected = optionValue === currentValue ? " selected" : "";
+      return `<option value="${escapeHtml(optionValue)}"${selected}>${escapeHtml(option.label || optionValue)}</option>`;
+    })
+    .join("");
+  return `
+    <div class="parse-quick-field">
+      <label for="parse-quick-${escapeHtml(name)}">${label}</label>
+      <select id="parse-quick-${escapeHtml(name)}" data-parse-quick-field="${escapeHtml(name)}">${optionHtml}</select>
+    </div>
+  `;
+}
+
+function renderParseQuickEditModal() {
+  if (!parseQuickModal || !parseQuickBody || !parseQuickTitle || !parseQuickMeta) return;
+  const target = getParseQuickEditTarget();
+  if (!target) {
+    closeParseQuickEditModal({ silent: true });
+    return;
+  }
+
+  const { kind, item, queueItem } = target;
+  const isSeam = kind === "seam";
+  parseQuickTitle.textContent = isSeam ? `焊缝 ${item.weld_id || "-"}` : `候选 ${item.candidate_id || "-"}`;
+  parseQuickMeta.textContent = `${queueItem.fileName || queueItem.path || "-"} · ${isSeam ? "显式/手动焊缝" : "候选焊缝"} · 双击图上标注可快速浏览和修改`;
+
+  if (isSeam) {
+    parseQuickBody.innerHTML = `
+      <div class="parse-quick-grid">
+        ${buildParseQuickReadOnlyField("焊缝号", item.weld_id)}
+        ${buildParseQuickReadOnlyField("来源", item.source_kind || "explicit")}
+        ${buildParseQuickReadOnlyField("图纸来源", item.draw_ref || "-")}
+        ${buildParseQuickInputField("材质", "material_spec", item.material_spec || "", { placeholder: "例如 P-No.1 / P-No.8" })}
+        ${buildParseQuickInputField("厚度(mm)", "thickness_mm", item.thickness_mm ?? "", { type: "number", step: "0.1", min: "0" })}
+        ${buildParseQuickInputField("位置", "position_code", item.position_code || "", { placeholder: "例如 1G / 2G / 6G" })}
+        ${buildParseQuickInputField("焊缝符号", "weld_symbol", item.weld_symbol || "", { placeholder: "BW / FW" })}
+        ${buildParseQuickInputField("置信度", "confidence_score", item.confidence_score ?? "", { type: "number", step: "0.01", min: "0", max: "1" })}
+        ${buildParseQuickSelectField("复核状态", "review_status", item.review_status || "pending", [
+          { value: "pending", label: "待确认" },
+          { value: "confirmed", label: "已确认" },
+          { value: "changed", label: "已变更" },
+          { value: "uncertain", label: "可疑" }
+        ])}
+      </div>
+    `;
+  } else {
+    const evidenceHtml = Array.isArray(item.evidence) && item.evidence.length
+      ? item.evidence
+          .map(
+            (evidence) => `
+              <li>
+                <strong>${escapeHtml(evidence.summary || evidence.type || "-")}</strong><br />
+                <span>${escapeHtml(evidence.source_ref || "-")} / ${Number.isFinite(Number(evidence.score)) ? Number(evidence.score).toFixed(2) : "-"}</span>
+              </li>
+            `
+          )
+          .join("")
+      : "<li>当前没有证据摘要</li>";
+    parseQuickBody.innerHTML = `
+      <div class="parse-quick-grid">
+        ${buildParseQuickReadOnlyField("候选ID", item.candidate_id)}
+        ${buildParseQuickReadOnlyField("接头类型", item.candidate_type || item.joint_geometry || "-")}
+        ${buildParseQuickReadOnlyField("图纸来源", item.draw_ref || "-")}
+        ${buildParseQuickInputField("建议焊缝号", "accepted_weld_id", item.accepted_weld_id || "", { placeholder: "例如 W-101" })}
+        ${buildParseQuickInputField("母材A", "material_guess_a", item.material_guess_a || "", { placeholder: "P-No.1" })}
+        ${buildParseQuickInputField("母材B", "material_guess_b", item.material_guess_b || "", { placeholder: "P-No.8" })}
+        ${buildParseQuickInputField("厚度A(mm)", "thickness_guess_a_mm", item.thickness_guess_a_mm ?? "", { type: "number", step: "0.1", min: "0" })}
+        ${buildParseQuickInputField("厚度B(mm)", "thickness_guess_b_mm", item.thickness_guess_b_mm ?? "", { type: "number", step: "0.1", min: "0" })}
+        ${buildParseQuickInputField("位置", "position_guess", item.position_guess || "", { placeholder: "1G / 2G / 6G" })}
+        ${buildParseQuickInputField("焊缝符号", "weld_symbol_guess", item.weld_symbol_guess || "", { placeholder: "BW / FW" })}
+        ${buildParseQuickInputField("置信度", "confidence_score", item.confidence_score ?? "", { type: "number", step: "0.01", min: "0", max: "1" })}
+        ${buildParseQuickSelectField("复核状态", "review_status", item.review_status || "pending", [
+          { value: "pending", label: "待确认" },
+          { value: "accepted", label: "已接受" },
+          { value: "rejected", label: "已忽略" },
+          { value: "uncertain", label: "可疑" },
+          { value: "merged", label: "已合并" }
+        ])}
+      </div>
+      <section class="parse-quick-panel">
+        <h4>识别证据</h4>
+        <ul class="parse-quick-evidence">${evidenceHtml}</ul>
+      </section>
+    `;
+  }
+
+  parseQuickModal.classList.remove("hidden");
+}
+
+function openParseQuickEditModal(kind, itemId, options = {}) {
+  const { silent = false } = options;
+  const normalizedKind = String(kind || "").trim();
+  const normalizedId = String(itemId || "").trim();
+  if (!normalizedKind || !normalizedId) return false;
+  if (normalizedKind === "seam") {
+    if (!setSelectedParseSeam(normalizedId, { silent: true })) return false;
+  } else if (normalizedKind === "candidate") {
+    if (!setSelectedParseCandidate(normalizedId, { silent: true })) return false;
+  } else {
+    return false;
+  }
+  uiState.parseQuickEdit = { kind: normalizedKind, itemId: normalizedId };
+  renderParseQuickEditModal();
+  if (!silent) {
+    addEvent(`已打开${normalizedKind === "seam" ? "焊缝" : "候选焊缝"}快速查看: ${normalizedId}`);
+  }
+  return true;
+}
+
+function saveParseQuickEditModal() {
+  const target = getParseQuickEditTarget();
+  if (!target || !parseQuickBody) return false;
+  const values = {};
+  parseQuickBody.querySelectorAll("[data-parse-quick-field]").forEach((node) => {
+    values[node.dataset.parseQuickField] = typeof node.value === "string" ? node.value.trim() : "";
+  });
+
+  let changed = false;
+  appState.parseQueue = appState.parseQueue.map((queueItem) => {
+    if (queueItem.id !== target.queueItem.id) return queueItem;
+    if (target.kind === "seam") {
+      return {
+        ...queueItem,
+        seams: (queueItem.seams || []).map((seam) => {
+          if (String(seam?.weld_id || "") !== target.itemId) return seam;
+          changed = true;
+          return normalizeParseSeamItem({
+            ...seam,
+            material_spec: values.material_spec || seam.material_spec || "",
+            thickness_mm: Math.max(0, Number(values.thickness_mm) || 0),
+            position_code: values.position_code || seam.position_code || "",
+            weld_symbol: values.weld_symbol || seam.weld_symbol || "",
+            confidence_score: Math.max(0, Math.min(1, Number(values.confidence_score) || 0)),
+            review_status: normalizeParseSeamReviewStatus(values.review_status, Number(values.confidence_score))
+          });
+        })
+      };
+    }
+    return {
+      ...queueItem,
+      candidates: (queueItem.candidates || []).map((candidate) => {
+        if (String(candidate?.candidate_id || "") !== target.itemId) return candidate;
+        changed = true;
+        return normalizeParseCandidateItem({
+          ...candidate,
+          accepted_weld_id: values.accepted_weld_id || "",
+          material_guess_a: values.material_guess_a || candidate.material_guess_a || "",
+          material_guess_b: values.material_guess_b || candidate.material_guess_b || "",
+          thickness_guess_a_mm: Math.max(0, Number(values.thickness_guess_a_mm) || 0),
+          thickness_guess_b_mm: Math.max(0, Number(values.thickness_guess_b_mm) || 0),
+          position_guess: values.position_guess || candidate.position_guess || "",
+          weld_symbol_guess: values.weld_symbol_guess || candidate.weld_symbol_guess || "",
+          confidence_score: Math.max(0, Math.min(1, Number(values.confidence_score) || 0)),
+          review_status: normalizeParseCandidateReviewStatus(values.review_status, Number(values.confidence_score))
+        });
+      })
+    };
+  });
+
+  if (!changed) return false;
+  rebuildParseResultFromQueue(appState.parseResult?.traceId || "");
+  renderParseWorkspace();
+  closeParseQuickEditModal({ silent: true });
+  addEvent(`已保存${target.kind === "seam" ? "焊缝" : "候选焊缝"}快速修改: ${target.itemId}`);
+  return true;
+}
+
+function setSelectedParseItemAnchor(anchor) {
+  const selectedSeamId = String(appState.parseSelectedSeamId || "").trim();
+  const selectedCandidateId = String(appState.parseSelectedCandidateId || "").trim();
+  if (selectedSeamId) {
+    return setParseItemAnchorById("seam", selectedSeamId, anchor);
+  }
+  if (selectedCandidateId) {
+    return setParseItemAnchorById("candidate", selectedCandidateId, anchor);
+  }
+  return false;
+}
+
+function buildDragAnchorFromPointer(event, kind, itemId) {
+  if (!parsePreviewHotspots) return null;
+  const rect = parsePreviewHotspots.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const seed = getParseSelectedAnchorSeed(kind, itemId);
+  const point = unrotatePreviewPoint({
+    x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+    y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
+  });
+  return {
+    x: point.x,
+    y: point.y,
+    w: Number(seed?.w) || (kind === "seam" ? 0.12 : 0.1),
+    h: Number(seed?.h) || (kind === "seam" ? 0.08 : 0.07),
+    page_index: Number.isFinite(Number(seed?.page_index))
+      ? Number(seed.page_index)
+      : Math.max(0, Number(appState.parsePreviewPageIndex) || 0)
+  };
+}
+
+function stopParseHotspotDrag(options = {}) {
+  const { announce = true } = options;
+  const drag = appState.parsePreviewDrag;
+  if (!drag) return;
+  appState.parsePreviewDrag = null;
+  if (drag.moved) {
+    appState.parsePreviewSuppressClickUntil = Date.now() + 250;
+  }
+  renderParseSelectedFilePanel();
+  if (announce && drag.moved) {
+    addEvent(drag.kind === "seam" ? `已拖动焊缝标注: ${drag.itemId}` : `已拖动候选标注: ${drag.itemId}`);
+  }
+}
+
+function createManualParseSeamAtAnchor(anchor, options = {}) {
+  const { silent = false } = options;
+  const normalizedAnchor = normalizePreviewAnchor(anchor);
+  const selectedItem = getSelectedParseQueueItem();
+  if (!normalizedAnchor || !selectedItem) return false;
+  const weldId = getNextParseManualSeamId(selectedItem);
+  const drawRef = selectedItem.fileName || basenameFromPath(selectedItem.path || "") || "manual";
+  appState.parseQueue = appState.parseQueue.map((item) => {
+    if (item.id !== selectedItem.id) return item;
+    return {
+      ...item,
+      seams: [
+        ...(item.seams || []),
+        normalizeParseSeamItem({
+          weld_id: weldId,
+          draw_ref: drawRef,
+          weld_symbol: "FW",
+          material_spec: "待确认",
+          thickness_mm: 0,
+          position_code: "待确认",
+          confidence_score: 0.35,
+          review_status: "uncertain",
+          anchor_bbox: normalizedAnchor,
+          source_kind: "manual"
+        })
+      ]
+    };
+  });
+  rebuildParseResultFromQueue(appState.parseResult?.traceId || "");
+  appState.parseSelectedSeamId = weldId;
+  appState.parseSelectedCandidateId = "";
+  renderParseSelectedFilePanel();
+  if (!silent) {
+    addEvent(`已新增手动焊缝: ${weldId}`);
+  }
+  return true;
+}
+
+function isManualParseSeam(seam) {
+  return String(seam?.source_kind || "").trim().toLowerCase() === "manual";
+}
+
+function deleteSelectedManualParseSeam(options = {}) {
+  const { silent = false } = options;
+  const selectedItem = getSelectedParseQueueItem();
+  const selectedSeamId = String(appState.parseSelectedSeamId || "").trim();
+  if (!selectedItem || !selectedSeamId) return false;
+  const targetSeam = (selectedItem.seams || []).find((seam) => String(seam?.weld_id || "") === selectedSeamId);
+  if (!isManualParseSeam(targetSeam)) return false;
+
+  let removed = false;
+  appState.parseQueue = appState.parseQueue.map((item) => {
+    if (item.id !== selectedItem.id) return item;
+    const nextSeams = (item.seams || []).filter((seam) => {
+      const match = String(seam?.weld_id || "") === selectedSeamId;
+      if (match) removed = true;
+      return !match;
+    });
+    return removed ? { ...item, seams: nextSeams } : item;
+  });
+
+  if (!removed) return false;
+  rebuildParseResultFromQueue(appState.parseResult?.traceId || "");
+  appState.parseSelectedSeamId = "";
+  appState.parseSelectedCandidateId = "";
+  renderParseWorkspace();
+  if (!silent) {
+    addEvent(`已删除手动焊缝: ${selectedSeamId}`);
+  }
+  return true;
+}
+
+function setParsePreviewAddSeamMode(enabled, options = {}) {
+  const { silent = false } = options;
+  const nextValue = Boolean(enabled);
+  if (appState.parsePreviewAddSeamMode === nextValue) return false;
+  appState.parsePreviewAddSeamMode = nextValue;
+  renderParseSelectedFilePanel();
+  if (!silent) {
+    addEvent(nextValue ? "已进入新增焊缝模式，点击图纸空白处即可放置" : "已退出新增焊缝模式");
+  }
+  return true;
+}
+
+function toggleParsePreviewAddSeamMode(options = {}) {
+  return setParsePreviewAddSeamMode(!appState.parsePreviewAddSeamMode, options);
+}
+
+function setParseShortcutPanelVisible(visible, options = {}) {
+  const { silent = false } = options;
+  const nextValue = Boolean(visible);
+  if (appState.parseShortcutPanelVisible === nextValue) return false;
+  appState.parseShortcutPanelVisible = nextValue;
+  renderParseSelectedFilePanel();
+  if (!silent) {
+    addEvent(nextValue ? "已打开快捷键面板" : "已关闭快捷键面板");
+  }
+  return true;
+}
+
+function toggleParseShortcutPanel(options = {}) {
+  return setParseShortcutPanelVisible(!appState.parseShortcutPanelVisible, options);
+}
+
+function rotateParsePreview(delta, options = {}) {
+  const { silent = false } = options;
+  const selectedItem = getSelectedParseQueueItem();
+  if (!selectedItem || selectedItem.fileType !== "pdf") return false;
+  appState.parsePreviewRotation = normalizeParsePreviewRotation(appState.parsePreviewRotation + Number(delta || 0));
+  renderParseSelectedFilePanel();
+  if (!silent) {
+    addEvent(`图纸已旋转到 ${appState.parsePreviewRotation}°`);
+  }
+  return true;
+}
+
+function syncSelectedParseSeam(item) {
+  const seams = Array.isArray(item?.seams) ? item.seams : [];
+  if (!seams.length) {
+    appState.parseSelectedSeamId = "";
+    return "";
+  }
+  const current = String(appState.parseSelectedSeamId || "").trim();
+  if (current && seams.some((seam) => String(seam.weld_id || "") === current)) {
+    return current;
+  }
+  if (String(appState.parseSelectedCandidateId || "").trim()) {
+    appState.parseSelectedSeamId = "";
+    return "";
+  }
+  appState.parseSelectedSeamId = String(seams[0].weld_id || "");
+  return appState.parseSelectedSeamId;
+}
+
+function setParseReviewStatus(queueId, reviewStatus, options = {}) {
+  const { silent = false } = options;
+  const normalizedId = String(queueId || "").trim();
+  const normalizedStatus = String(reviewStatus || "pending").trim().toLowerCase();
+  let changed = false;
+  appState.parseQueue = appState.parseQueue.map((item) => {
+    if (item.id !== normalizedId) return item;
+    changed = true;
+    return { ...item, reviewStatus: normalizedStatus };
+  });
+  if (!changed) return false;
+  renderParseWorkspace();
+  if (!silent) {
+    const label = normalizeParseReviewStatusMeta(normalizedStatus).label;
+    const target = appState.parseQueue.find((item) => item.id === normalizedId);
+    addEvent(`图纸复核状态已更新: ${target?.fileName || normalizedId} / ${label}`);
+  }
+  return true;
+}
+
+function buildParseQueueItemsFromHistory(target) {
+  return (target?.files || []).map((item) => ({
+    path: item.path || item.fileName,
+    fileName: item.fileName || basenameFromPath(item.path || ""),
+    fileType: item.fileType || inferParseFileType(item.path || item.fileName || ""),
+    sizeBytes: item.sizeBytes,
+    source: item.source || "history",
+    virtual: item.virtual || !isTauriRuntime()
+  }));
+}
+
+function acceptAllSuccessfulParseFiles() {
+  let changed = 0;
+  appState.parseQueue = appState.parseQueue.map((item) => {
+    if (item.status !== "success") return item;
+    if (item.reviewStatus === "accepted") return item;
+    changed += 1;
+    return { ...item, reviewStatus: "accepted" };
+  });
+  if (!changed) return 0;
+  renderParseWorkspace();
+  return changed;
+}
+
+function normalizeParseStatusMeta(status) {
+  const value = String(status || "").trim().toLowerCase();
+  if (value === "success") return { label: "成功", type: "ok" };
+  if (value === "partial") return { label: "部分成功", type: "warn" };
+  if (value === "failed") return { label: "失败", type: "danger" };
+  if (value === "parsing") return { label: "解析中", type: "warn" };
+  return { label: "待解析", type: "warn" };
+}
+
+function setParseProgress(progress, label) {
+  const safeProgress = Math.max(0, Math.min(100, Number(progress) || 0));
+  appState.parseProgress = safeProgress;
+  if (parseProgressBar) parseProgressBar.style.width = `${safeProgress}%`;
+  if (parseProgressLabel && typeof label === "string") {
+    parseProgressLabel.textContent = label;
+  }
+}
+
+function clearParseProgressTimer() {
+  if (uiState.parseProgressTimer) {
+    window.clearInterval(uiState.parseProgressTimer);
+    uiState.parseProgressTimer = 0;
+  }
+}
+
+function startParseProgressTimer(activeIds) {
+  clearParseProgressTimer();
+  const ids = new Set(Array.isArray(activeIds) ? activeIds : []);
+  if (!ids.size) return;
+  uiState.parseProgressTimer = window.setInterval(() => {
+    const nextProgress = Math.min(88, appState.parseProgress + 6 + Math.random() * 8);
+    appState.parseQueue = appState.parseQueue.map((item) => {
+      if (!ids.has(item.id)) return item;
+      return { ...item, progress: Math.max(item.progress, Math.floor(nextProgress)), status: "parsing" };
+    });
+    setParseProgress(nextProgress, `解析中 ${Math.floor(nextProgress)}%`);
+    renderParseQueue();
+  }, 240);
+}
+
+function renderParseLogs() {
+  if (!parseLogPanel) return;
+  if (!appState.parseLogs.length) {
+    parseLogPanel.innerHTML = "<p>等待解析日志...</p>";
+    return;
+  }
+  parseLogPanel.innerHTML = appState.parseLogs
+    .map((item) => `<p>[${item.time}] ${item.text}</p>`)
+    .join("");
+  parseLogPanel.scrollTop = parseLogPanel.scrollHeight;
+}
+
+function appendLog(text, level = "info") {
+  appState.parseLogs.push({
+    level,
+    time: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+    text: String(text || "").trim() || "-"
+  });
+  if (appState.parseLogs.length > 80) {
+    appState.parseLogs = appState.parseLogs.slice(-80);
+  }
+  renderParseLogs();
+}
+
+function syncParseOptionsForm() {
+  if (parseDetectSymbolsInput) parseDetectSymbolsInput.checked = Boolean(appState.parseOptions.detectWeldSymbols);
+  if (parseDetectSectionsInput) parseDetectSectionsInput.checked = Boolean(appState.parseOptions.detectSections);
+  if (parseLanguageSelect) parseLanguageSelect.value = appState.parseOptions.language || DEFAULT_PARSE_OPTIONS.language;
+}
+
+function updateParseOptionsFromForm() {
+  appState.parseOptions = {
+    detectWeldSymbols: Boolean(parseDetectSymbolsInput?.checked),
+    detectSections: Boolean(parseDetectSectionsInput?.checked),
+    language: String(parseLanguageSelect?.value || DEFAULT_PARSE_OPTIONS.language)
+  };
+}
+
+function getParseHistoryStorageKey(projectId = getCurrentProjectId()) {
+  return `weldlayer.parse_history.${String(projectId || PROTOTYPE_PROJECT_ID).trim() || PROTOTYPE_PROJECT_ID}`;
+}
+
+function formatParseLanguageLabel(language) {
+  const normalized = String(language || DEFAULT_PARSE_OPTIONS.language).trim();
+  if (normalized === "zh-CN") return "中文";
+  if (normalized === "en-US") return "English";
+  return normalized || "-";
+}
+
+function formatParseOptionSummary(options = appState.parseOptions) {
+  return `符号 ${options?.detectWeldSymbols ? "开" : "关"} / 分区 ${options?.detectSections ? "开" : "关"} / ${formatParseLanguageLabel(
+    options?.language
+  )}`;
+}
+
+function formatParseRunMode(mode) {
+  const normalized = String(mode || "").trim().toLowerCase();
+  if (normalized === "backend") return "后端解析";
+  if (normalized === "mock") return "模拟解析";
+  return normalized || "-";
+}
+
+function formatDateTimeLabel(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function normalizeParseHistoryItem(input) {
+  const files = Array.isArray(input?.files) ? input.files : [];
+  const normalizedOptions = {
+    detectWeldSymbols: Boolean(input?.options?.detectWeldSymbols),
+    detectSections: Boolean(input?.options?.detectSections),
+    language: String(input?.options?.language || DEFAULT_PARSE_OPTIONS.language)
+  };
+  return {
+    id: String(input?.id || `parse-history-${Date.now()}`),
+    traceId: String(input?.traceId || input?.trace_id || "-"),
+    projectId: String(input?.projectId || input?.project_id || getCurrentProjectId()),
+    projectName: String(input?.projectName || input?.project_name || getCurrentProjectName()),
+    status: String(input?.status || "failed"),
+    mode: String(input?.mode || "mock"),
+    startedAt: String(input?.startedAt || input?.started_at || ""),
+    completedAt: String(input?.completedAt || input?.completed_at || ""),
+    fileCount: Number(input?.fileCount) || files.length,
+    successCount: Number(input?.successCount) || 0,
+    failedCount: Number(input?.failedCount) || 0,
+    seamCount: Number(input?.seamCount) || 0,
+    candidateCount: Number(input?.candidateCount) || 0,
+    errorCount: Number(input?.errorCount) || 0,
+    options: normalizedOptions,
+    files: files.map((item) => ({
+      path: String(item?.path || item?.fileName || ""),
+      fileName: String(item?.fileName || basenameFromPath(item?.path || "") || ""),
+      fileType: String(item?.fileType || inferParseFileType(item?.path || item?.fileName || "") || ""),
+      source: String(item?.source || "history"),
+      sizeBytes: Number(item?.sizeBytes) || 0,
+      virtual: Boolean(item?.virtual)
+    }))
+  };
+}
+
+function loadParseHistoryForProject(projectId = getCurrentProjectId()) {
+  try {
+    const raw = window.localStorage.getItem(getParseHistoryStorageKey(projectId));
+    const rows = raw ? JSON.parse(raw) : [];
+    appState.parseHistory = Array.isArray(rows) ? rows.map((item) => normalizeParseHistoryItem(item)).slice(0, PARSE_HISTORY_LIMIT) : [];
+  } catch (error) {
+    appState.parseHistory = [];
+    appendLog(`解析历史读取失败，已跳过: ${String(error)}`, "error");
+  }
+  appState.selectedParseHistoryId = appState.parseHistory[0]?.id || "";
+  return appState.parseHistory;
+}
+
+function persistParseHistoryForProject(projectId = getCurrentProjectId()) {
+  try {
+    window.localStorage.setItem(
+      getParseHistoryStorageKey(projectId),
+      JSON.stringify(appState.parseHistory.slice(0, PARSE_HISTORY_LIMIT))
+    );
+  } catch (error) {
+    appendLog(`解析历史保存失败: ${String(error)}`, "error");
+  }
+}
+
+function getSelectedParseHistoryItem() {
+  const selectedId = String(appState.selectedParseHistoryId || "").trim();
+  if (selectedId) {
+    const found = appState.parseHistory.find((item) => item.id === selectedId);
+    if (found) return found;
+  }
+  return appState.parseHistory[0] || null;
+}
+
+function setSelectedParseHistory(historyId, options = {}) {
+  const { silent = false } = options;
+  const target = appState.parseHistory.find((item) => item.id === String(historyId || "").trim());
+  if (!target) return false;
+  appState.selectedParseHistoryId = target.id;
+  renderParseHistory();
+  if (!silent) {
+    addEvent(`已选中解析历史 ${target.traceId}`);
+  }
+  return true;
+}
+
+function applyParseHistoryOptions(historyId, options = {}) {
+  const { silent = false } = options;
+  const target = appState.parseHistory.find((item) => item.id === String(historyId || "").trim());
+  if (!target) return false;
+  appState.parseOptions = { ...target.options };
+  appState.selectedParseHistoryId = target.id;
+  renderParseWorkspace();
+  if (!silent) {
+    addEvent(`已回填解析参数: ${target.traceId}`);
+  }
+  return true;
+}
+
+function restoreParseHistoryQueue(historyId) {
+  const target = appState.parseHistory.find((item) => item.id === String(historyId || "").trim());
+  if (!target) return false;
+  resetParseWorkspace();
+  appState.parseOptions = { ...target.options };
+  enqueueParseFiles(buildParseQueueItemsFromHistory(target));
+  appState.selectedParseHistoryId = target.id;
+  renderParseWorkspace();
+  addEvent(`已按解析历史恢复队列: ${target.traceId}`);
+  return true;
+}
+
+async function rerunParseHistory(historyId) {
+  const target = appState.parseHistory.find((item) => item.id === String(historyId || "").trim());
+  if (!target) return null;
+  resetParseWorkspace();
+  appState.parseOptions = { ...target.options };
+  const queued = enqueueParseFiles(buildParseQueueItemsFromHistory(target));
+  appState.selectedParseHistoryId = target.id;
+  renderParseWorkspace();
+  if (!queued.added) {
+    addEvent(`解析历史重跑失败: ${target.traceId} 没有可执行文件`);
+    return null;
+  }
+  addEvent(`开始按历史任务重跑解析: ${target.traceId}`);
+  return runParseQueue();
+}
+
+function buildParseHistoryEntry({ request, response, queue, mode, startedAt, completedAt }) {
+  const files = Array.isArray(queue) ? queue : [];
+  const normalizedResponse = response || {};
+  const seamCount = Array.isArray(normalizedResponse.seams) ? normalizedResponse.seams.length : 0;
+  const candidateCount = Array.isArray(normalizedResponse.candidates) ? normalizedResponse.candidates.length : 0;
+  const errorCount = Array.isArray(normalizedResponse.errors) ? normalizedResponse.errors.length : 0;
+  const status = String(normalizedResponse.status || (errorCount ? "failed" : "success"));
+  const successCount = files.filter((item) => item.status === "success").length;
+  const failedCount = files.filter((item) => item.status === "failed").length;
+  return normalizeParseHistoryItem({
+    id: `parse-history-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    traceId: request?.trace_id || "-",
+    projectId: getCurrentProjectId(),
+    projectName: getCurrentProjectName(),
+    status,
+    mode,
+    startedAt,
+    completedAt,
+    fileCount: files.length,
+    successCount,
+    failedCount,
+    seamCount,
+    candidateCount,
+    errorCount,
+    options: { ...appState.parseOptions },
+    files: files.map((item) => ({
+      path: item.path,
+      fileName: item.fileName,
+      fileType: item.fileType,
+      source: item.source,
+      sizeBytes: item.sizeBytes,
+      virtual: item.virtual
+    }))
+  });
+}
+
+function appendParseHistoryEntry(entry) {
+  if (!entry) return null;
+  appState.parseHistory = [entry, ...appState.parseHistory.filter((item) => item.id !== entry.id)].slice(0, PARSE_HISTORY_LIMIT);
+  appState.selectedParseHistoryId = entry.id;
+  persistParseHistoryForProject(entry.projectId);
+  renderParseHistory();
+  return entry;
+}
+
+function getFilteredParseQueueItems(queue = appState.parseQueue) {
+  const statusFilter = String(appState.parseFilters?.status || "all").trim().toLowerCase();
+  const reviewFilter = String(appState.parseFilters?.review || "all").trim().toLowerCase();
+  return queue.filter((item) => {
+    const matchesStatus = statusFilter === "all" || String(item.status || "ready").trim().toLowerCase() === statusFilter;
+    const matchesReview = reviewFilter === "all" || String(item.reviewStatus || "pending").trim().toLowerCase() === reviewFilter;
+    return matchesStatus && matchesReview;
+  });
+}
+
+function collectParseSeamsFromQueue(queue = appState.parseQueue) {
+  return queue.flatMap((item) => (Array.isArray(item.seams) ? item.seams : []));
+}
+
+function collectParseErrorsFromQueue(queue = appState.parseQueue) {
+  return queue
+    .filter((item) => item.status === "failed")
+    .map((item) => ({
+      code: item.errorCode || "PARSE_FAILED",
+      message: item.errorMessage || "解析失败",
+      path: item.path || item.fileName
+    }));
+}
+
+function rebuildParseResultFromQueue(traceId = "") {
+  const seams = collectParseSeamsFromQueue();
+  const candidates = appState.parseQueue.flatMap((item) => (Array.isArray(item.candidates) ? item.candidates : []));
+  const errors = collectParseErrorsFromQueue();
+  const successCount = appState.parseQueue.filter((item) => item.status === "success").length;
+  const failedCount = appState.parseQueue.filter((item) => item.status === "failed").length;
+  if (!successCount && !failedCount) {
+    appState.parseResult = null;
+    return null;
+  }
+  let status = "failed";
+  if (successCount > 0 && failedCount > 0) status = "partial";
+  if (successCount > 0 && failedCount === 0) status = "success";
+  appState.parseResult = {
+    traceId: String(traceId || appState.parseResult?.traceId || ""),
+    status,
+    seams,
+    candidates,
+    errors,
+    successCount,
+    failedCount,
+    completedAt: new Date().toISOString()
+  };
+  return appState.parseResult;
+}
+
+function renderParseQueue() {
+  if (!parseQueueBody) return;
+  if (!appState.parseQueue.length) {
+    parseQueueBody.innerHTML = '<tr><td colspan="6">当前没有图纸排队，先选择 PDF / DWG。</td></tr>';
+    return;
+  }
+  const filteredQueue = getFilteredParseQueueItems();
+  if (!filteredQueue.length) {
+    parseQueueBody.innerHTML = '<tr><td colspan="6">当前筛选条件下没有图纸，调整状态或复核筛选后再看。</td></tr>';
+    return;
+  }
+  const selectedId = syncSelectedParseQueue()?.id || "";
+  parseQueueBody.innerHTML = filteredQueue
+    .map((item) => {
+      const status = normalizeParseStatusMeta(item.status);
+      const review = normalizeParseReviewStatusMeta(item.reviewStatus);
+      const rowClass =
+        item.status === "success" ? "parse-queue-row is-success" : item.status === "failed" ? "parse-queue-row is-failed" : "parse-queue-row";
+      const selectedClass = item.id === selectedId ? " is-selected-row" : "";
+      const canRetry = item.status === "failed" && !appState.parseBusy;
+      const canRemove = !appState.parseBusy;
+      return `
+        <tr class="${rowClass}${selectedClass}" data-parse-select="${item.id}">
+          <td class="parse-path-cell">
+            <div class="parse-path-stack">
+              <strong>${item.fileName || item.path}</strong>
+              <span>${item.path || item.fileName}</span>
+              <span>${statusTag(review.label, review.type)}</span>
+            </div>
+          </td>
+          <td>${(item.fileType || "-").toUpperCase()}</td>
+          <td>${statusTag(status.label, status.type)}</td>
+          <td class="parse-progress-cell">${item.progress || 0}%</td>
+          <td>${item.errorCode || "-"}</td>
+          <td>
+            <div class="parse-queue-actions">
+              <button class="ghost small" data-parse-remove="${item.id}" ${canRemove ? "" : "disabled"}>移除</button>
+              <button class="ghost small" data-parse-retry-item="${item.id}" ${canRetry ? "" : "disabled"}>重试</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderParsePreview() {
+  if (!parsePreviewCaption || !parsePreviewEmpty || !parsePreviewContent || !parsePreviewBody || !parsePreviewCandidateBody || !parseErrorList) return;
+  const result = appState.parseResult;
+  if (!result) {
+    parsePreviewCaption.textContent = "尚未生成解析结果";
+    parsePreviewEmpty.classList.remove("hidden");
+    parsePreviewContent.classList.add("hidden");
+    parsePreviewBody.innerHTML = "";
+    parsePreviewCandidateBody.innerHTML = "";
+    parseErrorList.innerHTML = "";
+    return;
+  }
+
+  const seams = Array.isArray(result.seams) ? result.seams : [];
+  const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+  const errors = Array.isArray(result.errors) ? result.errors : [];
+  parsePreviewCaption.textContent = `状态 ${String(result.status || "-").toUpperCase()} / 显式焊缝 ${seams.length} 条 / 候选焊缝 ${candidates.length} 条 / 错误 ${errors.length} 条`;
+  parsePreviewEmpty.classList.add("hidden");
+  parsePreviewContent.classList.remove("hidden");
+  parsePreviewBody.innerHTML = seams.length
+    ? seams
+        .map((item) => {
+          const confidence = Number(item.confidence_score);
+          return `
+            <tr>
+              <td>${item.weld_id || "-"}</td>
+              <td>${item.draw_ref || "-"}</td>
+              <td>${item.weld_symbol || "-"}</td>
+              <td>${item.material_spec || "-"}</td>
+              <td>${(Number(item.thickness_mm) || 0).toFixed(1)}</td>
+              <td>${item.position_code || "-"}</td>
+              <td>${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"}</td>
+            </tr>
+          `;
+        })
+        .join("")
+    : '<tr><td colspan="7">本次解析未提取到焊缝。</td></tr>';
+  parsePreviewCandidateBody.innerHTML = candidates.length
+    ? candidates
+        .map((item) => {
+          const confidence = Number(item.confidence_score);
+          const reviewMeta = getParseCandidateReviewMeta(item);
+          return `
+            <tr>
+              <td>${item.candidate_id || "-"}</td>
+              <td>${item.draw_ref || "-"}</td>
+              <td>${item.candidate_type || "-"}</td>
+              <td>${formatParseCandidateGuess(item)}</td>
+              <td>${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"}</td>
+              <td>${statusTag(reviewMeta.label, reviewMeta.type)}</td>
+            </tr>
+          `;
+        })
+        .join("")
+    : '<tr><td colspan="6">本次解析未生成候选焊缝。</td></tr>';
+  parseErrorList.innerHTML = errors
+    .map(
+      (item) => `
+        <div class="parse-error-item">
+          <strong>${item.code || "PARSE_FAILED"}</strong>
+          <p>${item.message || "解析失败"}</p>
+          <p>${item.path || "-"}</p>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderParseSelectedFilePanel() {
+  if (
+    !parseSelectedTitle ||
+    !parseSelectedMeta ||
+    !parsePreviewCanvas ||
+    !parsePreviewCanvasEmpty ||
+    !parsePreviewScroll ||
+    !parsePreviewDocument ||
+    !parsePreviewSurface ||
+    !parsePreviewHelp ||
+    !parsePreviewHotspots ||
+    !parseFileStatus ||
+    !parseFileSeamCount ||
+    !parseFileErrorCount ||
+    !parseFileCandidateCount ||
+    !parseFileSource ||
+    !parseFileSeamBody ||
+    !parseFileCandidateBody ||
+    !parseFileErrorList
+  ) {
+    return;
+  }
+
+  const item = syncSelectedParseQueue();
+  if (!item) {
+    parseSelectedTitle.textContent = "尚未选择图纸";
+    parseSelectedMeta.textContent = "点击文件队列中的图纸查看详情和焊缝定位。";
+    parsePreviewCanvas.classList.remove("is-annotate-mode");
+    if (parseDetailGrid) parseDetailGrid.classList.toggle("is-preview-expanded", appState.parsePreviewExpanded);
+    if (parsePreviewModeBtn) {
+      parsePreviewModeBtn.textContent = "切换到标注模式";
+      parsePreviewModeBtn.disabled = true;
+    }
+    if (parseShortcutsBtn) {
+      parseShortcutsBtn.disabled = true;
+      parseShortcutsBtn.classList.remove("is-active-tool");
+    }
+    if (parseAddSeamBtn) {
+      parseAddSeamBtn.textContent = "新增焊缝";
+      parseAddSeamBtn.disabled = true;
+      parseAddSeamBtn.classList.remove("is-active-tool");
+    }
+    if (parseDeleteSeamBtn) parseDeleteSeamBtn.disabled = true;
+    if (parsePreviewExpandBtn) {
+      parsePreviewExpandBtn.textContent = getParsePreviewExpandMeta().buttonText;
+      parsePreviewExpandBtn.disabled = true;
+    }
+    if (parseSelectPrevBtn) parseSelectPrevBtn.disabled = true;
+    if (parseSelectNextBtn) parseSelectNextBtn.disabled = true;
+    if (parseAcceptSelectedBtn) parseAcceptSelectedBtn.disabled = true;
+    if (parseResetSelectedBtn) parseResetSelectedBtn.disabled = true;
+    if (parseFlagSeamBtn) parseFlagSeamBtn.disabled = true;
+    if (parseUnflagSeamBtn) parseUnflagSeamBtn.disabled = true;
+    if (parseLoadSelectedBtn) parseLoadSelectedBtn.disabled = true;
+    if (parsePreviewRotateLeftBtn) parsePreviewRotateLeftBtn.disabled = true;
+    if (parsePreviewRotateRightBtn) parsePreviewRotateRightBtn.disabled = true;
+    if (parsePreviewZoomOutBtn) parsePreviewZoomOutBtn.disabled = true;
+    if (parsePreviewZoomResetBtn) {
+      parsePreviewZoomResetBtn.disabled = true;
+      parsePreviewZoomResetBtn.textContent = formatParsePreviewZoom();
+    }
+    if (parsePreviewZoomInBtn) parsePreviewZoomInBtn.disabled = true;
+    if (parseShortcutPanel) parseShortcutPanel.classList.add("hidden");
+    void clearParsePreviewDocument();
+    parsePreviewCanvasEmpty.classList.remove("hidden");
+    parsePreviewCanvasEmpty.textContent = "当前未选中图纸，或该图纸还没有解析结果。";
+    parsePreviewHelp.textContent = "当前未选中图纸。进入标注模式后，可拖动标注或新增手动焊缝。";
+    if (parsePreviewShortcuts) {
+      parsePreviewShortcuts.textContent = "快捷键：R/Shift+R 旋转，+/- 缩放，0 重置，M 标注模式，N 新增焊缝，Del 删除手动焊缝。";
+    }
+    parsePreviewHotspots.innerHTML = "";
+    parseFileStatus.textContent = "-";
+    parseFileSeamCount.textContent = "0";
+    parseFileErrorCount.textContent = "0";
+    parseFileCandidateCount.textContent = "0";
+    parseFileSource.textContent = "-";
+    parseFileSeamBody.innerHTML = '<tr><td colspan="7">当前没有可显示的文件级焊缝。</td></tr>';
+    parseFileCandidateBody.innerHTML = '<tr><td colspan="6">当前没有可显示的候选焊缝。</td></tr>';
+    parseFileErrorList.innerHTML = "";
+    return;
+  }
+
+  const statusMeta = normalizeParseStatusMeta(item.status);
+  const reviewMeta = normalizeParseReviewStatusMeta(item.reviewStatus);
+  const seams = Array.isArray(item.seams) ? item.seams : [];
+  const candidates = Array.isArray(item.candidates) ? item.candidates : [];
+  const errors = getParseErrorsForItem(item);
+  const index = getParseQueueIndex(item.id);
+  const selectedSeamId = syncSelectedParseSeam(item);
+  const selectedCandidateId = syncSelectedParseCandidate(item);
+  const suspiciousCount = countFlaggedParseSeams(item);
+  const previewLoadState = String(item.previewLoadState || "idle");
+  const previewError = String(item.previewError || "");
+  const previewUrl = resolveParsePreviewUrl(item);
+  const hasPdfPreview = item.fileType === "pdf" && previewUrl;
+  const previewModeMeta = getParsePreviewModeMeta();
+  const previewExpandMeta = getParsePreviewExpandMeta();
+  const selectedSeam = seams.find((seam) => String(seam?.weld_id || "") === selectedSeamId) || null;
+  const selectedManualSeam = isManualParseSeam(selectedSeam);
+  const pageCount = Math.max(1, Number(appState.parsePreviewPageCount) || (item.fileType === "pdf" ? 1 : 1));
+  const pageLabel = `${Math.max(1, Math.min(pageCount, Number(appState.parsePreviewPageIndex) + 1 || 1))}/${pageCount}`;
+  parseSelectedTitle.textContent = item.fileName || item.path || "未命名图纸";
+  parseSelectedMeta.textContent = `${item.path || item.fileName} · ${(item.fileType || "-").toUpperCase()} · ${formatBytes(
+    item.sizeBytes
+  )} · ${index + 1}/${appState.parseQueue.length} · 复核 ${reviewMeta.label} · 可疑焊缝 ${suspiciousCount} · 候选 ${candidates.length}`;
+  parseFileStatus.textContent = `${statusMeta.label} / ${reviewMeta.label}`;
+  parseFileSeamCount.textContent = String(seams.length);
+  parseFileErrorCount.textContent = String(errors.length);
+  parseFileCandidateCount.textContent = String(candidates.length);
+  parseFileSource.textContent = formatParseSourceLabel(item.source);
+  if (parseDetailGrid) parseDetailGrid.classList.toggle("is-preview-expanded", appState.parsePreviewExpanded);
+  parsePreviewCanvas.classList.toggle("is-annotate-mode", appState.parsePreviewMode === "annotate");
+  if (parsePreviewModeBtn) {
+    parsePreviewModeBtn.textContent = previewModeMeta.buttonText;
+    parsePreviewModeBtn.disabled = false;
+  }
+  if (parseShortcutsBtn) {
+    parseShortcutsBtn.disabled = false;
+    parseShortcutsBtn.classList.toggle("is-active-tool", appState.parseShortcutPanelVisible);
+  }
+  if (parseAddSeamBtn) {
+    parseAddSeamBtn.textContent = appState.parsePreviewAddSeamMode ? "点击图纸放置焊缝" : "新增焊缝";
+    parseAddSeamBtn.disabled = appState.parsePreviewMode !== "annotate";
+    parseAddSeamBtn.classList.toggle("is-active-tool", appState.parsePreviewAddSeamMode);
+  }
+  if (parseDeleteSeamBtn) {
+    parseDeleteSeamBtn.disabled = !selectedManualSeam;
+  }
+  if (parsePreviewExpandBtn) {
+    parsePreviewExpandBtn.textContent = previewExpandMeta.buttonText;
+    parsePreviewExpandBtn.disabled = false;
+  }
+  if (parseSelectPrevBtn) parseSelectPrevBtn.disabled = index <= 0;
+  if (parseSelectNextBtn) parseSelectNextBtn.disabled = index < 0 || index >= appState.parseQueue.length - 1;
+  if (parseAcceptSelectedBtn) parseAcceptSelectedBtn.disabled = false;
+  if (parseResetSelectedBtn) parseResetSelectedBtn.disabled = false;
+  if (parseFlagSeamBtn) parseFlagSeamBtn.disabled = !selectedSeam;
+  if (parseUnflagSeamBtn) parseUnflagSeamBtn.disabled = !selectedSeam;
+  if (parseLoadSelectedBtn) parseLoadSelectedBtn.disabled = false;
+  if (parsePreviewRotateLeftBtn) parsePreviewRotateLeftBtn.disabled = item.fileType !== "pdf";
+  if (parsePreviewRotateRightBtn) parsePreviewRotateRightBtn.disabled = item.fileType !== "pdf";
+  if (parsePreviewZoomResetBtn) parsePreviewZoomResetBtn.textContent = formatParsePreviewZoom();
+  if (parsePreviewZoomOutBtn) parsePreviewZoomOutBtn.disabled = !hasPdfPreview && item.fileType !== "pdf";
+  if (parsePreviewZoomResetBtn) parsePreviewZoomResetBtn.disabled = !hasPdfPreview && item.fileType !== "pdf";
+  if (parsePreviewZoomInBtn) parsePreviewZoomInBtn.disabled = !hasPdfPreview && item.fileType !== "pdf";
+  if (parseShortcutPanel) parseShortcutPanel.classList.toggle("hidden", !appState.parseShortcutPanelVisible);
+  if (item.fileType === "pdf" && !hasPdfPreview && !item.virtual && isTauriRuntime() && item.path && previewLoadState === "idle") {
+    void ensureParsePreviewAsset(item);
+  }
+  if (hasPdfPreview) {
+    void renderParsePdfPreview(item, previewUrl).catch((error) => {
+      const message = String(error || "无法渲染 PDF 预览");
+      updateParseQueueItem(item.id, (entry) => ({
+        ...entry,
+        previewLoadState: "failed",
+        previewError: message
+      }));
+      if (parsePreviewCanvasEmpty) {
+        parsePreviewCanvasEmpty.classList.remove("hidden");
+        parsePreviewCanvasEmpty.textContent = `图纸预览渲染失败：${message}`;
+      }
+      if (parsePreviewDocument) {
+        parsePreviewDocument.classList.add("hidden");
+      }
+    });
+    parsePreviewHelp.textContent =
+      appState.parsePreviewMode === "annotate"
+        ? selectedSeamId || selectedCandidateId
+          ? `${previewModeMeta.helpText} 当前第 ${pageLabel} 页，缩放 ${formatParsePreviewZoom()}，旋转 ${normalizeParsePreviewRotation(appState.parsePreviewRotation)}°。`
+          : `${previewModeMeta.helpText} 请先在右侧表格或热点中选中目标。当前第 ${pageLabel} 页，旋转 ${normalizeParsePreviewRotation(appState.parsePreviewRotation)}°。`
+        : `${previewModeMeta.helpText} 当前第 ${pageLabel} 页，缩放 ${formatParsePreviewZoom()}，旋转 ${normalizeParsePreviewRotation(appState.parsePreviewRotation)}°。`;
+  } else {
+    void clearParsePreviewDocument();
+    parsePreviewHelp.textContent =
+      item.fileType === "dwg"
+        ? "当前 DWG 还没有可视化预览能力，仍使用占位画布。后续需要 sidecar 生成预览图。"
+        : previewLoadState === "loading"
+          ? "正在加载真实图纸预览。完成后会把焊缝热点叠加到 PDF 上。"
+          : previewLoadState === "failed"
+            ? `图纸预览加载失败：${previewError || "无法读取 PDF"}`
+        : `${previewModeMeta.helpText} 当前仅显示占位画布。`;
+  }
+  if (parsePreviewShortcuts) {
+    parsePreviewShortcuts.textContent =
+      "快捷键：R/Shift+R 旋转，+/- 缩放，0 重置，M 标注模式，N 新增焊缝，Del 删除手动焊缝，? 打开快捷键。";
+  }
+  const visibleSeams = seams.filter((seam) => isAnchorVisibleOnPreviewPage(seam.anchor_bbox));
+  const visibleCandidates = candidates.filter((candidate) => isAnchorVisibleOnPreviewPage(candidate.anchor_bbox));
+  const seamHotspots = visibleSeams.map((seam, seamIndex) => {
+      const confidence = Number(seam.confidence_score) || 0;
+      const seamReviewMeta = getParseSeamReviewMeta(seam);
+      const activeClass = String(seam.weld_id || "") === selectedSeamId ? " is-active" : "";
+      const draggingClass =
+        appState.parsePreviewDrag?.kind === "seam" && String(appState.parsePreviewDrag?.itemId || "") === String(seam.weld_id || "")
+          ? " is-dragging"
+          : "";
+      const hotspotClass = seamReviewMeta.hotspotClass ? `parse-hotspot ${seamReviewMeta.hotspotClass}` : "parse-hotspot";
+      const anchorStyle = getAnchorStyle(seam.anchor_bbox, seamIndex, visibleSeams.length, "seam");
+      const placementClass = getHotspotPlacementClass(seam.anchor_bbox, seamIndex, visibleSeams.length, "seam");
+      return `
+        <div class="${hotspotClass} ${placementClass}${activeClass}${draggingClass}" style="left:${anchorStyle.left};top:${anchorStyle.top};" data-parse-seam-select="${seam.weld_id || ""}" data-parse-hotspot-kind="seam" data-parse-hotspot-id="${seam.weld_id || ""}">
+          <strong>${seam.weld_id || `W-${seamIndex + 1}`}</strong>
+          <span>${seam.weld_symbol || "-"} / ${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"} / ${seamReviewMeta.label}</span>
+        </div>
+      `;
+    });
+  const candidateHotspots = visibleCandidates.map((candidate, candidateIndex) => {
+    const confidence = Number(candidate.confidence_score) || 0;
+    const candidateMeta = getParseCandidateReviewMeta(candidate);
+    const activeClass = String(candidate.candidate_id || "") === selectedCandidateId ? " is-active" : "";
+    const draggingClass =
+      appState.parsePreviewDrag?.kind === "candidate" && String(appState.parsePreviewDrag?.itemId || "") === String(candidate.candidate_id || "")
+        ? " is-dragging"
+        : "";
+    const anchorStyle = getAnchorStyle(candidate.anchor_bbox, candidateIndex, visibleCandidates.length, "candidate");
+    const placementClass = getHotspotPlacementClass(candidate.anchor_bbox, candidateIndex, visibleCandidates.length, "candidate");
+    return `
+      <div class="parse-hotspot ${candidateMeta.hotspotClass} ${placementClass}${activeClass}${draggingClass}" style="left:${anchorStyle.left};top:${anchorStyle.top};" data-parse-candidate-select="${candidate.candidate_id || ""}" data-parse-hotspot-kind="candidate" data-parse-hotspot-id="${candidate.candidate_id || ""}">
+        <strong>${candidate.candidate_id || `C-${candidateIndex + 1}`}</strong>
+        <span>${candidate.candidate_type || "-"} / ${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"} / ${candidateMeta.label}</span>
+      </div>
+    `;
+  });
+  parsePreviewHotspots.innerHTML = [...seamHotspots, ...candidateHotspots].join("");
+
+  if (errors.length) {
+    parsePreviewCanvasEmpty.classList.remove("hidden");
+    parsePreviewCanvasEmpty.textContent = `${statusMeta.label}：${errors[0].message || "解析失败"}`;
+  } else if (item.fileType === "pdf" && !hasPdfPreview) {
+    parsePreviewCanvasEmpty.classList.remove("hidden");
+    parsePreviewCanvasEmpty.textContent =
+      previewLoadState === "loading"
+        ? "正在加载真实图纸预览..."
+        : previewLoadState === "failed"
+          ? `图纸预览加载失败：${previewError || "无法读取 PDF"}`
+          : "正在准备图纸预览...";
+  } else if (!seams.length && !candidates.length) {
+    parsePreviewCanvasEmpty.classList.remove("hidden");
+    parsePreviewCanvasEmpty.textContent =
+      item.status === "success" ? "该图纸解析完成，但未提取到焊缝。" : "该图纸尚未生成焊缝结果。";
+  } else if (!hasPdfPreview && item.fileType !== "pdf") {
+    parsePreviewCanvasEmpty.classList.remove("hidden");
+    parsePreviewCanvasEmpty.textContent = "当前使用占位画布。后续需要为该文件类型生成真实预览。";
+  } else {
+    parsePreviewCanvasEmpty.classList.add("hidden");
+  }
+
+  parseFileSeamBody.innerHTML = seams.length
+    ? seams
+        .map((seam) => {
+          const confidence = Number(seam.confidence_score) || 0;
+          const seamReviewMeta = getParseSeamReviewMeta(seam);
+          const rowClass = [
+            String(seam.weld_id || "") === selectedSeamId ? "is-selected-row" : "",
+            seamReviewMeta.type === "danger" ? "is-parse-seam-uncertain" : ""
+          ]
+            .filter(Boolean)
+            .join(" ");
+          const active = rowClass ? ` class="${rowClass}"` : "";
+          return `
+            <tr${active} data-parse-seam-row="${seam.weld_id || ""}">
+              <td>${seam.weld_id || "-"}</td>
+              <td>${seam.weld_symbol || "-"}</td>
+              <td>${seam.material_spec || "-"}</td>
+              <td>${(Number(seam.thickness_mm) || 0).toFixed(1)}</td>
+              <td>${seam.position_code || "-"}</td>
+              <td>${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"}</td>
+              <td>${statusTag(seamReviewMeta.label, seamReviewMeta.type)}</td>
+            </tr>
+          `;
+        })
+        .join("")
+    : '<tr><td colspan="7">当前图纸没有可显示的焊缝结果。</td></tr>';
+  parseFileCandidateBody.innerHTML = candidates.length
+    ? candidates
+        .map((candidate) => {
+          const confidence = Number(candidate.confidence_score) || 0;
+          const reviewMeta = getParseCandidateReviewMeta(candidate);
+          const active = String(candidate.candidate_id || "") === selectedCandidateId ? ' class="is-selected-row"' : "";
+          const evidenceSummary = Array.isArray(candidate.evidence) && candidate.evidence.length
+            ? candidate.evidence.map((item) => item.summary || item.type || "-").slice(0, 2).join("；")
+            : "无证据摘要";
+          return `
+            <tr${active} data-parse-candidate-row="${candidate.candidate_id || ""}" title="${evidenceSummary}">
+              <td>${candidate.candidate_id || "-"}</td>
+              <td>${candidate.candidate_type || "-"}</td>
+              <td>${formatParseCandidateGuess(candidate)}</td>
+              <td>${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"}</td>
+              <td>${statusTag(reviewMeta.label, reviewMeta.type)}</td>
+              <td>
+                <div class="parse-queue-actions">
+                  <button class="ghost small" data-parse-candidate-accept="${candidate.candidate_id || ""}">接受</button>
+                  <button class="ghost small" data-parse-candidate-reject="${candidate.candidate_id || ""}">忽略</button>
+                  <button class="ghost small" data-parse-candidate-reset="${candidate.candidate_id || ""}">重置</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        })
+        .join("")
+    : '<tr><td colspan="6">当前图纸没有候选焊缝。</td></tr>';
+
+  parseFileErrorList.innerHTML = errors
+    .map(
+      (error) => `
+        <div class="parse-error-item">
+          <strong>${error.code || "PARSE_FAILED"}</strong>
+          <p>${error.message || "解析失败"}</p>
+          <p>${error.path || "-"}</p>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderParseHistory() {
+  if (
+    !parseHistoryBody ||
+    !parseHistoryCaption ||
+    !parseHistoryDetailEmpty ||
+    !parseHistoryDetailContent ||
+    !parseHistoryDetailTitle ||
+    !parseHistoryDetailMeta ||
+    !parseHistoryDetailPills ||
+    !parseHistoryFileList
+  ) {
+    return;
+  }
+
+  if (!appState.parseHistory.length) {
+    parseHistoryBody.innerHTML = '<tr><td colspan="6">当前项目还没有解析历史。</td></tr>';
+    parseHistoryCaption.textContent = "按项目保存最近解析批次，可回填参数或恢复队列";
+    parseHistoryDetailEmpty.classList.remove("hidden");
+    parseHistoryDetailContent.classList.add("hidden");
+    parseHistoryFileList.innerHTML = "";
+    return;
+  }
+
+  const selected = getSelectedParseHistoryItem();
+  parseHistoryCaption.textContent = `当前项目共 ${appState.parseHistory.length} 条解析历史，最近完成于 ${formatDateTimeLabel(
+    appState.parseHistory[0]?.completedAt
+  )}`;
+  parseHistoryBody.innerHTML = appState.parseHistory
+    .map((item) => {
+      const statusMeta = normalizeParseStatusMeta(item.status);
+      const selectedClass = item.id === selected?.id ? " is-selected-row" : "";
+      return `
+        <tr class="${selectedClass}" data-parse-history-select="${item.id}">
+          <td>${formatDateTimeLabel(item.completedAt)}</td>
+          <td>${item.traceId}</td>
+          <td>${statusTag(statusMeta.label, statusMeta.type)}</td>
+          <td>${item.fileCount}</td>
+          <td>${item.seamCount}+候选${item.candidateCount || 0} / ${item.errorCount}</td>
+          <td>
+            <div class="parse-queue-actions">
+              <button class="ghost small" data-parse-history-rerun="${item.id}">再次执行</button>
+              <button class="ghost small" data-parse-history-restore="${item.id}">恢复队列</button>
+              <button class="ghost small" data-parse-history-options="${item.id}">回填参数</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  if (!selected) {
+    parseHistoryDetailEmpty.classList.remove("hidden");
+    parseHistoryDetailContent.classList.add("hidden");
+    parseHistoryFileList.innerHTML = "";
+    return;
+  }
+
+  parseHistoryDetailEmpty.classList.add("hidden");
+  parseHistoryDetailContent.classList.remove("hidden");
+  parseHistoryDetailTitle.textContent = `${selected.traceId} / ${formatParseRunMode(selected.mode)}`;
+  parseHistoryDetailMeta.textContent = `${selected.projectName} · 开始 ${formatDateTimeLabel(
+    selected.startedAt
+  )} · 完成 ${formatDateTimeLabel(selected.completedAt)}`;
+  parseHistoryDetailPills.innerHTML = [
+    `<span class="pill">${formatParseOptionSummary(selected.options)}</span>`,
+    `<span class="pill">文件 ${selected.fileCount}</span>`,
+    `<span class="pill">成功 ${selected.successCount}</span>`,
+    `<span class="pill">失败 ${selected.failedCount}</span>`,
+    `<span class="pill">焊缝 ${selected.seamCount}</span>`,
+    `<span class="pill">候选 ${selected.candidateCount || 0}</span>`
+  ].join("");
+  parseHistoryFileList.innerHTML = selected.files.length
+    ? selected.files
+        .map(
+          (item) => `
+            <li>
+              <div>
+                <strong>${item.fileName || item.path || "-"}</strong>
+                <span class="mono">${item.path || "-"}</span>
+              </div>
+              <span>${(item.fileType || "-").toUpperCase()} / ${formatParseSourceLabel(item.source)}</span>
+            </li>
+          `
+        )
+        .join("")
+    : '<li><span>该次解析没有保留文件明细。</span></li>';
+}
+
+function syncParseActionState() {
+  const queueCount = appState.parseQueue.length;
+  const filteredQueueCount = getFilteredParseQueueItems().length;
+  const failedCount = appState.parseQueue.filter((item) => item.status === "failed").length;
+  const resultSeamCount = appState.parseResult?.seams?.length || 0;
+  const resultCandidateCount = appState.parseResult?.candidates?.length || 0;
+  const selectedItem = getSelectedParseQueueItem();
+  const selectedIndex = selectedItem ? getParseQueueIndex(selectedItem.id) : -1;
+  const selectedSeamCount = selectedItem?.seams?.length || 0;
+  const selectedAcceptedCandidateCount = (selectedItem?.candidates || []).filter(
+    (candidate) => normalizeParseCandidateReviewStatus(candidate.review_status, candidate.confidence_score) === "accepted"
+  ).length;
+  const selectedSeam = selectedItem?.seams?.find((item) => String(item.weld_id || "") === String(appState.parseSelectedSeamId || "").trim()) || null;
+  const selectedSeamReview = getParseSeamReviewMeta(selectedSeam);
+  const acceptedQueue = appState.parseQueue.filter((item) => item.reviewStatus === "accepted");
+  const acceptedSeamCount = acceptedQueue.reduce((total, item) => total + (item.seams?.length || 0), 0);
+  const acceptedCandidateCount = appState.parseQueue.reduce(
+    (total, item) =>
+      total +
+      (item.candidates || []).filter((candidate) => normalizeParseCandidateReviewStatus(candidate.review_status, candidate.confidence_score) === "accepted").length,
+    0
+  );
+  if (parseRunBtn) parseRunBtn.disabled = !queueCount || appState.parseBusy;
+  if (parseRetryBtn) parseRetryBtn.disabled = !failedCount || appState.parseBusy;
+  if (parseAcceptAllBtn) {
+    const pendingSuccessfulCount = appState.parseQueue.filter(
+      (item) => item.status === "success" && item.reviewStatus !== "accepted"
+    ).length;
+    parseAcceptAllBtn.disabled = !pendingSuccessfulCount || appState.parseBusy;
+  }
+  if (parseLoadSeamsBtn) parseLoadSeamsBtn.disabled = !resultSeamCount || appState.parseBusy;
+  if (parseLoadAcceptedBtn) parseLoadAcceptedBtn.disabled = !(acceptedSeamCount || acceptedCandidateCount) || appState.parseBusy;
+  if (parseLoadSelectedBtn) parseLoadSelectedBtn.disabled = !(selectedSeamCount || selectedAcceptedCandidateCount) || appState.parseBusy;
+  if (parseSelectPrevBtn) parseSelectPrevBtn.disabled = queueCount <= 1 || selectedIndex <= 0 || appState.parseBusy;
+  if (parseSelectNextBtn) parseSelectNextBtn.disabled = queueCount <= 1 || selectedIndex < 0 || selectedIndex >= queueCount - 1 || appState.parseBusy;
+  if (parseAcceptSelectedBtn) parseAcceptSelectedBtn.disabled = !selectedItem || selectedItem.status !== "success" || appState.parseBusy;
+  if (parseResetSelectedBtn) parseResetSelectedBtn.disabled = !selectedItem || appState.parseBusy;
+  if (parseFlagSeamBtn) parseFlagSeamBtn.disabled = !selectedSeam || appState.parseBusy || selectedSeamReview.type === "danger";
+  if (parseUnflagSeamBtn) parseUnflagSeamBtn.disabled = !selectedSeam || appState.parseBusy || selectedSeamReview.type !== "danger";
+  if (parsePickFilesBtn) parsePickFilesBtn.disabled = appState.parseBusy;
+  if (parseAddSampleBtn) parseAddSampleBtn.disabled = appState.parseBusy;
+  if (parseClearQueueBtn) parseClearQueueBtn.disabled = !queueCount || appState.parseBusy;
+  if (parseFilterStatus) parseFilterStatus.value = appState.parseFilters.status || "all";
+  if (parseFilterReview) parseFilterReview.value = appState.parseFilters.review || "all";
+  if (parseQueueCaption) {
+    const successCount = appState.parseQueue.filter((item) => item.status === "success").length;
+    parseQueueCaption.textContent = `显示 ${filteredQueueCount}/${queueCount} 份 / 成功 ${successCount} / 失败 ${failedCount} / 已接受 ${acceptedQueue.length}`;
+  }
+  if (parseStatusLabel) {
+    if (appState.parseBusy) {
+      parseStatusLabel.textContent = "解析中";
+    } else if (appState.parseResult?.status) {
+      parseStatusLabel.textContent = `已完成 ${String(appState.parseResult.status).toUpperCase()}`;
+    } else {
+      parseStatusLabel.textContent = queueCount ? "待解析" : "未开始";
+    }
+  }
+  if (parseSummaryLabel) {
+    const errorCount = appState.parseResult?.errors?.length || 0;
+    parseSummaryLabel.textContent = `队列 ${queueCount} 份图纸，显式焊缝 ${resultSeamCount} 条，候选 ${resultCandidateCount} 条，错误 ${errorCount} 条，已接受文件焊缝 ${acceptedSeamCount} 条，已接受候选 ${acceptedCandidateCount} 条`;
+  }
+}
+
+function renderParseWorkspace() {
+  renderParseQueue();
+  renderParsePreview();
+  renderParseSelectedFilePanel();
+  renderParseHistory();
+  renderParseLogs();
+  syncParseOptionsForm();
+  syncParseActionState();
+}
+
+function resetParseWorkspace(options = {}) {
+  const { preserveQueue = false, preserveResult = false } = options;
+  clearParseProgressTimer();
+  appState.parseBusy = false;
+  appState.parseProgress = 0;
+  appState.parseOptions = { ...DEFAULT_PARSE_OPTIONS };
+  appState.parseFilters = { status: "all", review: "all" };
+  appState.parseSelectedQueueId = "";
+  appState.parseSelectedSeamId = "";
+  appState.parseSelectedCandidateId = "";
+  if (!preserveQueue) {
+    releaseParsePreviewUrls(appState.parseQueue);
+    appState.parseQueue = [];
+  } else {
+    appState.parseQueue = appState.parseQueue.map((item) => ({
+      ...item,
+      status: "ready",
+      progress: 0,
+      errorCode: "",
+      errorMessage: "",
+      seams: [],
+      candidates: []
+    }));
+  }
+  if (!preserveResult) {
+    appState.parseResult = null;
+  }
+  appState.parseLogs = [
+    {
+      level: "info",
+      time: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+      text: `解析工作区已准备就绪，当前项目 ${getCurrentProjectId()}`
+    }
+  ];
+  setParseProgress(0, "等待加入解析队列");
+  renderParseWorkspace();
+}
+
+function enqueueParseFiles(items) {
+  const sourceItems = Array.isArray(items) ? items : [];
+  if (!sourceItems.length) return { added: 0, duplicates: 0, rejected: 0 };
+  const existingKeys = new Set(appState.parseQueue.map((item) => buildParseQueueKey(item)));
+  const nextItems = [];
+  let duplicates = 0;
+  let rejected = 0;
+
+  sourceItems.forEach((raw) => {
+    const item = buildParseQueueItem(raw);
+    if (!item.fileType) {
+      rejected += 1;
+      appendLog(`已拒绝不支持的文件: ${item.path || item.fileName}`, "error");
+      return;
+    }
+    const key = buildParseQueueKey(item);
+    if (existingKeys.has(key)) {
+      duplicates += 1;
+      return;
+    }
+    existingKeys.add(key);
+    nextItems.push(item);
+  });
+
+  if (nextItems.length) {
+    appState.parseQueue = [...appState.parseQueue, ...nextItems];
+    if (!appState.parseSelectedQueueId) {
+      appState.parseSelectedQueueId = nextItems[0].id;
+    }
+    renderParseWorkspace();
+    appendLog(`已加入解析队列 ${nextItems.length} 份图纸`);
+  }
+  return { added: nextItems.length, duplicates, rejected };
+}
+
+function buildParseTraceId() {
+  return `PARSE-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${Math.random()
+    .toString(36)
+    .slice(2, 6)
+    .toUpperCase()}`;
+}
+
+function buildParseRequestPayload(queue) {
+  const files = queue.map((item) => ({
+    path: item.path,
+    file_type: item.fileType
+  }));
+  return {
+    trace_id: buildParseTraceId(),
+    project_id: getCurrentProjectId(),
+    files,
+    options: {
+      detect_weld_symbols: Boolean(appState.parseOptions.detectWeldSymbols),
+      detect_sections: Boolean(appState.parseOptions.detectSections),
+      language: appState.parseOptions.language || DEFAULT_PARSE_OPTIONS.language
+    }
+  };
+}
+
+function applyParseResponseToQueue(targetIds, response) {
+  const targetSet = new Set(Array.isArray(targetIds) ? targetIds : []);
+  const errorByPath = new Map();
+  (response?.errors || []).forEach((item) => {
+    const directKey = String(item.path || "").trim().toLowerCase();
+    const baseKey = basenameFromPath(item.path || "").toLowerCase();
+    if (directKey) errorByPath.set(directKey, item);
+    if (baseKey) errorByPath.set(baseKey, item);
+  });
+  const seamsByRef = new Map();
+  (response?.seams || []).forEach((item) => {
+    const refKey = basenameFromPath(item.draw_ref || item.path || "").toLowerCase();
+    if (!seamsByRef.has(refKey)) seamsByRef.set(refKey, []);
+    seamsByRef.get(refKey).push(item);
+  });
+  const candidatesByRef = new Map();
+  (response?.candidates || []).forEach((item) => {
+    const refKey = basenameFromPath(item.draw_ref || item.path || "").toLowerCase();
+    if (!candidatesByRef.has(refKey)) candidatesByRef.set(refKey, []);
+    candidatesByRef.get(refKey).push(normalizeParseCandidateItem(item));
+  });
+
+  appState.parseQueue = appState.parseQueue.map((item) => {
+    if (!targetSet.has(item.id)) return item;
+    const directKey = String(item.path || "").trim().toLowerCase();
+    const baseKey = basenameFromPath(item.path || item.fileName).toLowerCase();
+    const error = errorByPath.get(directKey) || errorByPath.get(baseKey);
+    const seams = seamsByRef.get(baseKey) || [];
+    const candidates = candidatesByRef.get(baseKey) || [];
+    if (error) {
+      return {
+        ...item,
+        status: "failed",
+        progress: 100,
+        errorCode: String(error.code || "PARSE_FAILED"),
+        errorMessage: String(error.message || "解析失败"),
+        reviewStatus: "pending",
+        seams: [],
+        candidates: []
+      };
+    }
+    return {
+      ...item,
+      status: "success",
+      progress: 100,
+      errorCode: "",
+      errorMessage: "",
+      reviewStatus: "pending",
+      seams: seams.map((seam) => normalizeParseSeamItem(seam)),
+      candidates
+    };
+  });
+  return rebuildParseResultFromQueue(response?.trace_id || "");
+}
+
+async function runMockParse(queue, request) {
+  await new Promise((resolve) => window.setTimeout(resolve, 900));
+  const seams = [];
+  const candidates = [];
+  const errors = [];
+  const logs = [
+    {
+      level: "info",
+      message: `mock parser received ${queue.length} files for ${request.project_id}`
+    }
+  ];
+
+  queue.forEach((item, index) => {
+    if (!item.fileType) {
+      errors.push({
+        code: "PARSE_UNSUPPORTED_FILE_TYPE",
+        message: "unsupported file type",
+        path: item.path || item.fileName
+      });
+      return;
+    }
+    const confidence = item.fileType === "dwg" ? 0.66 + index * 0.04 : 0.8 + index * 0.03;
+    if (item.fileType === "pdf") {
+      seams.push({
+        weld_id: `W-AUTO-${String(index + 1).padStart(3, "0")}`,
+        draw_ref: item.fileName || basenameFromPath(item.path),
+        weld_symbol: "FW",
+        material_spec: "P-No.1",
+        thickness_mm: 10 + index * 4,
+        position_code: "2G",
+        confidence_score: Math.min(0.96, confidence),
+        review_status: confidence >= 0.85 ? "pending" : "uncertain"
+      });
+    }
+    candidates.push({
+      candidate_id: `WC-${String(index + 1).padStart(4, "0")}`,
+      draw_ref: item.fileName || basenameFromPath(item.path),
+      sheet_no: `S-${String(index + 1).padStart(2, "0")}`,
+      page_index: 0,
+      source_kind: item.fileType === "dwg" ? "vector" : "hybrid",
+      anchor_bbox: {
+        x: 120 + index * 40,
+        y: 180 + index * 30,
+        w: 120,
+        h: 72
+      },
+      candidate_type: item.fileType === "dwg" ? "branch_joint" : "butt_joint",
+      joint_geometry: item.fileType === "dwg" ? "pipe_branch" : "plate_butt",
+      material_guess_a: item.fileType === "dwg" ? "P-No.1" : "P-No.1",
+      material_guess_b: item.fileType === "dwg" ? "P-No.8" : "P-No.1",
+      thickness_guess_a_mm: 10 + index * 4,
+      thickness_guess_b_mm: item.fileType === "dwg" ? 8 + index * 3 : 10 + index * 4,
+      position_guess: item.fileType === "dwg" ? "5G" : "2G",
+      weld_symbol_guess: item.fileType === "dwg" ? "BW" : "FW",
+      confidence_score: Math.min(item.fileType === "dwg" ? 0.82 : 0.9, confidence + (item.fileType === "dwg" ? 0.08 : 0.04)),
+      review_status: item.fileType === "dwg" ? "uncertain" : "pending",
+      evidence: [
+        {
+          type: item.fileType === "dwg" ? "geometry_branch" : "geometry_butt_joint",
+          score: 0.42,
+          source_ref: item.fileName || basenameFromPath(item.path),
+          summary: item.fileType === "dwg" ? "检测到支管相贯连接" : "检测到对接边界"
+        },
+        {
+          type: "material_label_nearby",
+          score: 0.17,
+          source_ref: "ocr/material",
+          summary: `邻近材料标注 ${item.fileType === "dwg" ? "P-No.1 / P-No.8" : "P-No.1"}`
+        }
+      ]
+    });
+    logs.push({
+      level: "info",
+      message: `mock parsed ${item.fileName || item.path}`
+    });
+  });
+
+  let status = "success";
+  if (errors.length && seams.length) status = "partial";
+  if (errors.length && !seams.length) status = "failed";
+  return {
+    trace_id: request.trace_id,
+    status,
+    seams,
+    candidates,
+    errors,
+    logs
+  };
+}
+
+function mapExtractedSeamToReviewRow(item, index) {
+  const materialSpec = String(item.material_spec || "P-No.1");
+  const [matA, matB] = materialSpec.includes("/") ? materialSpec.split("/").map((value) => value.trim()) : [materialSpec, materialSpec];
+  const confidence = Number(item.confidence_score) || 0;
+  const reviewStatus = normalizeParseSeamReviewStatus(item.review_status, confidence);
+  const sourceType = String(item.source_kind || "").trim().toLowerCase() === "manual" ? "manual" : "explicit";
+  return {
+    id: String(item.weld_id || `W-PARSE-${index + 1}`),
+    matA: matA || "P-No.1",
+    matB: matB || matA || "P-No.1",
+    thkA: Number(item.thickness_mm) || 0,
+    thkB: Number(item.thickness_mm) || 0,
+    pos: String(item.position_code || "1G"),
+    symbol: String(item.weld_symbol || "BW"),
+    conf: confidence,
+    status: reviewStatus === "uncertain" ? "uncertain" : reviewStatus === "confirmed" ? "confirmed" : "pending",
+    sourceType,
+    sourceDrawRef: String(item.draw_ref || ""),
+    sourceCandidateId: ""
+  };
+}
+
+function mapCandidateToReviewRow(item, index) {
+  const confidence = Number(item.confidence_score) || 0;
+  const reviewStatus = normalizeParseCandidateReviewStatus(item.review_status, confidence);
+  return {
+    id: String(item.accepted_weld_id || item.candidate_id || `W-CAND-${index + 1}`),
+    matA: String(item.material_guess_a || "P-No.1"),
+    matB: String(item.material_guess_b || item.material_guess_a || "P-No.1"),
+    thkA: Number(item.thickness_guess_a_mm) || 0,
+    thkB: Number(item.thickness_guess_b_mm) || Number(item.thickness_guess_a_mm) || 0,
+    pos: String(item.position_guess || "1G"),
+    symbol: String(item.weld_symbol_guess || "BW"),
+    conf: confidence,
+    status: reviewStatus === "accepted" ? "pending" : reviewStatus === "uncertain" ? "uncertain" : "pending",
+    sourceType: "candidate",
+    sourceDrawRef: String(item.draw_ref || ""),
+    sourceCandidateId: String(item.candidate_id || "")
+  };
+}
+
+function loadParseResultIntoSeams(options = {}) {
+  const { selectedOnly = false, acceptedOnly = false } = options;
+  const result = appState.parseResult;
+  const selectedItem = getSelectedParseQueueItem();
+  const explicitSeams = selectedOnly
+    ? selectedItem?.seams || []
+    : acceptedOnly
+      ? appState.parseQueue
+          .filter((item) => item.reviewStatus === "accepted")
+          .flatMap((item) => item.seams || [])
+      : Array.isArray(result?.seams)
+        ? result.seams
+        : [];
+  const acceptedCandidates = selectedOnly
+    ? (selectedItem?.candidates || []).filter((item) => normalizeParseCandidateReviewStatus(item.review_status, item.confidence_score) === "accepted")
+    : acceptedOnly
+      ? appState.parseQueue
+          .filter((item) => item.reviewStatus === "accepted")
+          .flatMap((item) => (item.candidates || []).filter((candidate) => normalizeParseCandidateReviewStatus(candidate.review_status, candidate.confidence_score) === "accepted"))
+      : appState.parseQueue.flatMap((item) =>
+          (item.candidates || []).filter((candidate) => normalizeParseCandidateReviewStatus(candidate.review_status, candidate.confidence_score) === "accepted")
+        );
+  if (!explicitSeams.length && !acceptedCandidates.length) {
+    addEvent(
+      selectedOnly
+        ? "当前图纸没有可载入的显式焊缝或已接受候选"
+        : acceptedOnly
+          ? "当前没有已接受图纸中的显式焊缝或已接受候选"
+          : "当前没有可载入的解析焊缝结果"
+    );
+    return false;
+  }
+  clearSeamImportPreview();
+  appState.seamRows = [
+    ...explicitSeams.map((item, index) => mapExtractedSeamToReviewRow(item, index)),
+    ...acceptedCandidates.map((item, index) => mapCandidateToReviewRow(item, explicitSeams.length + index))
+  ];
+  renderSeamTable();
+  setMasterDirty("seam", true);
+  setView("seam");
+  addEvent(
+    selectedOnly
+      ? `当前图纸解析结果已载入焊缝确认，显式 ${explicitSeams.length} 条，候选 ${acceptedCandidates.length} 条`
+      : acceptedOnly
+        ? `已接受图纸解析结果已载入焊缝确认，显式 ${explicitSeams.length} 条，候选 ${acceptedCandidates.length} 条`
+      : `解析结果已载入焊缝确认，显式 ${explicitSeams.length} 条，候选 ${acceptedCandidates.length} 条`
+  );
+  return true;
+}
+
+async function pickDrawingFilesFromDesktop() {
+  if (!isTauriRuntime()) return [];
+  const payload = await invokeTauriCommand("pick_drawing_files", {});
+  const rows = JSON.parse(payload);
+  return Array.isArray(rows)
+    ? rows.map((item) =>
+        buildParseQueueItem({
+          path: item.path,
+          fileName: item.file_name,
+          fileType: item.file_type,
+          sizeBytes: item.size_bytes,
+          source: "desktop",
+          virtual: false
+        })
+      )
+    : [];
+}
+
+async function runParseQueue(options = {}) {
+  const { retryFailedOnly = false, targetIds = [] } = options;
+  if (appState.parseBusy) return null;
+  updateParseOptionsFromForm();
+
+  let queue = [];
+  if (Array.isArray(targetIds) && targetIds.length) {
+    const targetSet = new Set(targetIds);
+    queue = appState.parseQueue.filter((item) => targetSet.has(item.id));
+  } else if (retryFailedOnly) {
+    queue = appState.parseQueue.filter((item) => item.status === "failed");
+  } else {
+    queue = appState.parseQueue;
+  }
+
+  if (!queue.length) {
+    appendLog(retryFailedOnly ? "当前没有可重试的失败任务" : "请先加入要解析的图纸");
+    return null;
+  }
+
+  appState.parseBusy = true;
+  const activeIds = queue.map((item) => item.id);
+  if (activeIds.length === 1) {
+    appState.parseSelectedQueueId = activeIds[0];
+  }
+  appState.parseQueue = appState.parseQueue.map((item) =>
+    activeIds.includes(item.id)
+      ? {
+          ...item,
+          status: "parsing",
+          progress: 5,
+          errorCode: "",
+          errorMessage: "",
+          reviewStatus: "pending",
+          previewLoadState: item.previewUrl ? item.previewLoadState : "idle",
+          previewError: "",
+          seams: [],
+          candidates: []
+        }
+      : item
+  );
+  setParseProgress(5, retryFailedOnly ? "准备重试失败任务" : "准备解析图纸");
+  renderParseWorkspace();
+  startParseProgressTimer(activeIds);
+  appendLog(`${retryFailedOnly ? "开始重试" : "开始解析"} ${queue.length} 份图纸`);
+
+  const request = buildParseRequestPayload(queue);
+  const startedAt = new Date().toISOString();
+  const parseMode = isTauriRuntime() && queue.every((item) => !item.virtual && item.path) ? "backend" : "mock";
+  try {
+    let response = null;
+    if (parseMode === "backend") {
+      const payload = await invokeTauriCommand("run_parse", {
+        requestJson: JSON.stringify(request)
+      });
+      response = JSON.parse(payload);
+    } else {
+      response = await runMockParse(queue, request);
+    }
+    (response?.logs || []).forEach((item) => appendLog(item.message || "-", item.level || "info"));
+    const result = applyParseResponseToQueue(activeIds, response);
+    clearParseProgressTimer();
+    setParseProgress(100, `解析完成 ${String(response?.status || "success").toUpperCase()}`);
+    appState.parseBusy = false;
+    appendParseHistoryEntry(
+      buildParseHistoryEntry({
+        request,
+        response,
+        queue: appState.parseQueue.filter((item) => activeIds.includes(item.id)),
+        mode: parseMode,
+        startedAt,
+        completedAt: new Date().toISOString()
+      })
+    );
+    renderParseWorkspace();
+    appendLog(`解析完成：焊缝 ${result?.seams?.length || 0} 条，错误 ${result?.errors?.length || 0} 条`);
+    return response;
+  } catch (error) {
+    clearParseProgressTimer();
+    appState.parseBusy = false;
+    appState.parseQueue = appState.parseQueue.map((item) =>
+      activeIds.includes(item.id)
+        ? {
+            ...item,
+            status: "failed",
+            progress: 100,
+            errorCode: "PARSE_RUNTIME",
+            errorMessage: String(error),
+            reviewStatus: "pending",
+            seams: [],
+            candidates: []
+          }
+        : item
+    );
+    rebuildParseResultFromQueue(request.trace_id);
+    setParseProgress(100, "解析失败");
+    appendParseHistoryEntry(
+      buildParseHistoryEntry({
+        request,
+        response: {
+          trace_id: request.trace_id,
+          status: "failed",
+          seams: [],
+          errors: activeIds.map((itemId) => {
+            const target = appState.parseQueue.find((row) => row.id === itemId);
+            return {
+              code: target?.errorCode || "PARSE_RUNTIME",
+              message: target?.errorMessage || String(error),
+              path: target?.path || target?.fileName || itemId
+            };
+          })
+        },
+        queue: appState.parseQueue.filter((item) => activeIds.includes(item.id)),
+        mode: parseMode,
+        startedAt,
+        completedAt: new Date().toISOString()
+      })
+    );
+    renderParseWorkspace();
+    appendLog(`解析失败: ${String(error)}`, "error");
+    return null;
+  }
 }
 
 function simulateParse() {
-  appState.parseProgress = 0;
-  const bar = document.querySelector("#parse-progress-bar");
-  const label = document.querySelector("#parse-progress-label");
-  appendLog("开始解析图纸批次");
-  const timer = setInterval(() => {
-    appState.parseProgress += 8 + Math.random() * 10;
-    if (appState.parseProgress >= 100) {
-      appState.parseProgress = 100;
-      clearInterval(timer);
-      bar.style.width = "100%";
-      label.textContent = "解析完成: 焊缝信息表已生成";
-      appendLog("解析完成，识别到 12 条焊缝");
-      appState.seamRows = appState.seamRows.map((row) => {
-        const next = { ...row };
-        if (next.conf < 0.7 && next.status !== "confirmed") next.status = "uncertain";
-        return next;
-      });
-      renderSeamTable();
-      setStatusSnapshot();
-      return;
-    }
-    bar.style.width = `${appState.parseProgress}%`;
-    label.textContent = `解析进度 ${Math.floor(appState.parseProgress)}%`;
-    appendLog(`正在识别焊缝符号与几何要素 (${Math.floor(appState.parseProgress)}%)`);
-  }, 350);
+  return runParseQueue();
 }
-
 function setStatusSnapshot() {
   document.querySelector("#status-standard").textContent = appState.standard;
   const hasError = appState.conflicts.some((item) => item.severity === "error");
   document.querySelector("#status-match").textContent = hasError ? "partial" : "match";
   document.querySelector("#status-license").textContent = appState.licenseStatus;
+}
+
+function getCurrentProjectId() {
+  return String(appState.currentProject?.id || PROTOTYPE_PROJECT_ID);
+}
+
+function getCurrentProjectName() {
+  return String(appState.currentProject?.name || "Prototype UI Project");
+}
+
+function normalizeProjectRecord(item) {
+  return {
+    id: String(item?.project_id || item?.id || PROTOTYPE_PROJECT_ID),
+    name: String(item?.project_name || item?.name || "未命名项目"),
+    company: String(item?.company_name || item?.company || ""),
+    drawingType: String(item?.drawing_type || item?.drawingType || "PDF + DWG"),
+    standard: fromStandardCode(item?.standard_code || item?.standard || "asme_ix"),
+    archivedAt: Number(item?.archived_at) || 0,
+    updatedAt: Number(item?.updated_at) || Math.floor(Date.now() / 1000)
+  };
+}
+
+function syncProjectFormValues() {
+  if (!projectForm) return;
+  const project = appState.currentProject || DEFAULT_PROJECT;
+  projectForm.elements.project_name.value = project.name;
+  projectForm.elements.project_code.value = project.id;
+  projectForm.elements.company.value = project.company;
+  projectForm.elements.drawing_type.value = project.drawingType;
+  projectForm.elements.standard_code.value = project.standard;
+  if (projectFormMode) {
+    projectFormMode.textContent = project.archivedAt ? "查看已归档项目" : "编辑当前项目";
+  }
+}
+
+function renderProjectRecentList() {
+  if (!projectRecentBody) return;
+  const rows = [...(appState.projects || [])].sort((left, right) => right.updatedAt - left.updatedAt);
+  if (!rows.length) {
+    projectRecentBody.innerHTML = '<tr><td colspan="8">暂无项目记录</td></tr>';
+    if (projectRecentCaption) {
+      projectRecentCaption.textContent = "当前还没有已保存项目，可先通过右侧表单创建。";
+    }
+    return;
+  }
+
+  const archivedCount = rows.filter((item) => item.archivedAt).length;
+  if (projectRecentCaption) {
+    projectRecentCaption.textContent = `共 ${rows.length} 个项目，已归档 ${archivedCount} 个。`;
+  }
+  projectRecentBody.innerHTML = rows
+    .map((item) => {
+      const isCurrent = item.id === getCurrentProjectId();
+      const archived = Boolean(item.archivedAt);
+      return `
+        <tr${isCurrent ? ' class="is-selected-row"' : ""}>
+          <td>${formatCreatedAt(item.updatedAt)}</td>
+          <td>${item.id}</td>
+          <td>${item.name}</td>
+          <td>${item.company || "-"}</td>
+          <td>${item.drawingType || "-"}</td>
+          <td>${item.standard}</td>
+          <td>${archived ? statusTag("已归档", "warn") : statusTag("活动", "ok")}</td>
+          <td>
+            <div class="button-row">
+              <button class="ghost small" data-project-open="${item.id}">打开</button>
+              <button class="ghost small" data-project-archive="${item.id}" data-archived="${archived ? "0" : "1"}">${archived ? "恢复" : "归档"}</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderProjectHome() {
+  const project = appState.currentProject || DEFAULT_PROJECT;
+  if (projectCurrentId) projectCurrentId.textContent = project.id;
+  if (projectCurrentName) projectCurrentName.textContent = project.name;
+  if (projectCurrentSummary) {
+    const archivedText = project.archivedAt ? "已归档，可打开查看但默认不参与新匹配。" : "活动项目，可继续导入、匹配和导出。";
+    projectCurrentSummary.textContent = `企业：${project.company || "-"}；标准：${project.standard}；图纸类型：${project.drawingType || "-"}；${archivedText}`;
+  }
+  if (projectCurrentPills) {
+    projectCurrentPills.innerHTML = `
+      <span class="pill">${project.drawingType || "-"}</span>
+      <span class="pill">${project.standard}</span>
+      <span class="pill">${project.archivedAt ? "已归档" : "活动项目"}</span>
+    `;
+  }
+  if (projectArchiveCurrentBtn) {
+    projectArchiveCurrentBtn.textContent = project.archivedAt ? "恢复当前项目" : "归档当前项目";
+  }
+  if (projectLastScore) {
+    const latestReport = appState.matchReports.find((item) => item.projectId === project.id);
+    projectLastScore.textContent = latestReport ? latestReport.decision : "-";
+  }
+  syncProjectFormValues();
+  renderProjectRecentList();
 }
 
 function toStandardCode(code) {
@@ -2933,7 +5799,7 @@ function buildMatchRequestPayload(useStoredMasterData = false) {
   const standardCode = toStandardCode(appState.standard);
   return {
     trace_id: appState.traceId,
-    project_id: PROTOTYPE_PROJECT_ID,
+    project_id: getCurrentProjectId(),
     standard_code: standardCode,
     inventory_policy: "warn",
     top_k: 3,
@@ -3021,10 +5887,142 @@ function welderCandidateToRow(item) {
 async function listCommandItems(commandName) {
   const payload = await invokeTauriCommand(commandName, {
     dbPath: PROTOTYPE_DB_PATH,
-    projectId: PROTOTYPE_PROJECT_ID,
+    projectId: getCurrentProjectId(),
     limit: MASTER_DATA_SYNC_LIMIT
   });
   return JSON.parse(payload);
+}
+
+async function reloadProjectsFromBackend(includeArchived = true) {
+  const payload = await invokeTauriCommand("list_projects", {
+    dbPath: PROTOTYPE_DB_PATH,
+    limit: 50,
+    includeArchived
+  });
+  const rows = JSON.parse(payload);
+  appState.projects = rows.map((item) => normalizeProjectRecord(item));
+  renderProjectHome();
+  return appState.projects;
+}
+
+async function saveProjectRecord(project) {
+  const normalized = normalizeProjectRecord({
+    project_id: project.id,
+    project_name: project.name,
+    company_name: project.company,
+    drawing_type: project.drawingType,
+    standard_code: project.standard,
+    archived_at: project.archivedAt,
+    updated_at: project.updatedAt
+  });
+  if (typeof window.__TAURI_INTERNALS__?.invoke === "function") {
+    await invokeTauriCommand("upsert_project", {
+      dbPath: PROTOTYPE_DB_PATH,
+      projectId: normalized.id,
+      projectName: normalized.name,
+      companyName: normalized.company,
+      drawingType: normalized.drawingType,
+      standardCode: normalized.standard
+    });
+    await reloadProjectsFromBackend(true);
+    return appState.projects.find((item) => item.id === normalized.id) || normalized;
+  }
+
+  normalized.updatedAt = Math.floor(Date.now() / 1000);
+  normalized.archivedAt = 0;
+  const existingIndex = appState.projects.findIndex((item) => item.id === normalized.id);
+  if (existingIndex >= 0) {
+    appState.projects.splice(existingIndex, 1, normalized);
+  } else {
+    appState.projects.unshift(normalized);
+  }
+  renderProjectHome();
+  return normalized;
+}
+
+async function setCurrentProjectContext(project, options = {}) {
+  const { reloadContext = true } = options;
+  const previousProjectId = getCurrentProjectId();
+  appState.currentProject = normalizeProjectRecord(project);
+  appState.standard = appState.currentProject.standard;
+  if (previousProjectId !== appState.currentProject.id || !appState.parseLogs.length) {
+    resetParseWorkspace();
+  }
+  loadParseHistoryForProject(appState.currentProject.id);
+  renderProjectHome();
+  renderParseWorkspace();
+  setStatusSnapshot();
+  if (!reloadContext) return;
+  await bootstrapMasterDataFromBackend();
+  await refreshExecutionHistory(true);
+}
+
+async function openProjectById(projectId) {
+  const local = appState.projects.find((item) => item.id === String(projectId || "").trim());
+  if (local) {
+    await setCurrentProjectContext(local);
+    return true;
+  }
+  if (typeof window.__TAURI_INTERNALS__?.invoke !== "function") return false;
+  const payload = await invokeTauriCommand("get_project", {
+    dbPath: PROTOTYPE_DB_PATH,
+    projectId: projectId
+  });
+  const item = JSON.parse(payload);
+  if (!item) return false;
+  await setCurrentProjectContext(normalizeProjectRecord(item));
+  await reloadProjectsFromBackend(true);
+  return true;
+}
+
+async function archiveProjectRecord(projectId, archived) {
+  const normalizedId = String(projectId || "").trim();
+  if (!normalizedId) return false;
+  if (typeof window.__TAURI_INTERNALS__?.invoke === "function") {
+    await invokeTauriCommand("archive_project", {
+      dbPath: PROTOTYPE_DB_PATH,
+      projectId: normalizedId,
+      archived
+    });
+    await reloadProjectsFromBackend(true);
+  } else {
+    appState.projects = appState.projects.map((item) => item.id === normalizedId
+      ? { ...item, archivedAt: archived ? Math.floor(Date.now() / 1000) : 0, updatedAt: Math.floor(Date.now() / 1000) }
+      : item);
+  }
+
+  if (getCurrentProjectId() === normalizedId) {
+    const target = appState.projects.find((item) => item.id === normalizedId)
+      || { ...appState.currentProject, archivedAt: archived ? Math.floor(Date.now() / 1000) : 0 };
+    await setCurrentProjectContext(target, { reloadContext: false });
+  } else {
+    renderProjectHome();
+  }
+  return true;
+}
+
+async function bootstrapProjectContext() {
+  if (typeof window.__TAURI_INTERNALS__?.invoke !== "function") {
+    loadParseHistoryForProject(getCurrentProjectId());
+    renderProjectHome();
+    renderParseWorkspace();
+    return;
+  }
+  try {
+    const rows = await reloadProjectsFromBackend(true);
+    const activeProjects = rows.filter((item) => !item.archivedAt);
+    const preferred = activeProjects.find((item) => item.id === getCurrentProjectId()) || activeProjects[0];
+    if (preferred) {
+      await setCurrentProjectContext(preferred, { reloadContext: false });
+    } else {
+      renderProjectHome();
+    }
+  } catch (error) {
+    addEvent(`项目列表加载失败，继续使用本地默认项目: ${String(error)}`);
+    renderProjectHome();
+  }
+  await bootstrapMasterDataFromBackend();
+  await refreshExecutionHistory(true);
 }
 
 async function syncRowsToBackend(rows, commandSet) {
@@ -3037,7 +6035,7 @@ async function syncRowsToBackend(rows, commandSet) {
     if (id && !localIds.has(id)) {
       await invokeTauriCommand(commandSet.delete, {
         dbPath: PROTOTYPE_DB_PATH,
-        projectId: PROTOTYPE_PROJECT_ID,
+        projectId: getCurrentProjectId(),
         [commandSet.deleteIdArg]: id
       });
     }
@@ -3046,7 +6044,7 @@ async function syncRowsToBackend(rows, commandSet) {
   for (const row of rows) {
     await invokeTauriCommand(commandSet.upsert, {
       dbPath: PROTOTYPE_DB_PATH,
-      projectId: PROTOTYPE_PROJECT_ID,
+      projectId: getCurrentProjectId(),
       [commandSet.upsertArg]: JSON.stringify(commandSet.toPayload(row))
     });
   }
@@ -3137,6 +6135,7 @@ async function reloadBatchRowsFromBackend() {
 async function reloadMatchReportsFromBackend() {
   const payload = await invokeTauriCommand("list_match_reports", {
     dbPath: PROTOTYPE_DB_PATH,
+    projectId: getCurrentProjectId(),
     limit: EXECUTION_HISTORY_LIMIT
   });
   const rows = JSON.parse(payload);
@@ -3159,6 +6158,7 @@ async function reloadMatchReportsFromBackend() {
 async function reloadAuditLogsFromBackend() {
   const payload = await invokeTauriCommand("list_audit_logs", {
     dbPath: PROTOTYPE_DB_PATH,
+    projectId: getCurrentProjectId(),
     limit: EXECUTION_HISTORY_LIMIT
   });
   const rows = JSON.parse(payload);
@@ -3177,13 +6177,13 @@ async function reloadAuditLogsFromBackend() {
 async function reloadMatchBaselinesFromBackend() {
   const payload = await invokeTauriCommand("list_match_baselines", {
     dbPath: PROTOTYPE_DB_PATH,
-    projectId: PROTOTYPE_PROJECT_ID,
+    projectId: getCurrentProjectId(),
     limit: EXECUTION_HISTORY_LIMIT
   });
   const rows = JSON.parse(payload);
   appState.matchBaselines = rows.map((item) => ({
     traceId: String(item.trace_id || ""),
-    projectId: String(item.project_id || PROTOTYPE_PROJECT_ID),
+    projectId: String(item.project_id || getCurrentProjectId()),
     label: String(item.baseline_label || ""),
     decision: String(item.decision || "partial"),
     rulePackageVersion: String(item.rule_package_version || "-"),
@@ -3207,6 +6207,7 @@ async function refreshExecutionHistory(silent = false) {
   }
   try {
     await Promise.all([reloadMatchReportsFromBackend(), reloadAuditLogsFromBackend(), reloadMatchBaselinesFromBackend()]);
+    renderProjectHome();
     if (!silent) addEvent("匹配历史已刷新");
   } catch (error) {
     if (!silent) addEvent(`匹配历史加载失败: ${String(error)}`);
@@ -3310,7 +6311,7 @@ async function runMatch(options = {}) {
     const requestPayload = buildMatchRequestPayload(true);
     const responseJson = await invokeTauriCommand("run_match", {
       dbPath: PROTOTYPE_DB_PATH,
-      projectName: "Prototype UI Project",
+      projectName: getCurrentProjectName(),
       requestJson: JSON.stringify(requestPayload)
     });
     const response = JSON.parse(responseJson);
@@ -3828,17 +6829,788 @@ function initHandlers() {
 
   syncMasterToolbarState();
 
-  document.querySelector("#project-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    appState.standard = form.get("standard_code");
-    setStatusSnapshot();
-    addEvent(`项目已创建，标准设置为 ${appState.standard}`);
-    setView("import");
+  if (projectForm) {
+    projectForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const project = {
+        id: String(form.get("project_code") || "").trim(),
+        name: String(form.get("project_name") || "").trim(),
+        company: String(form.get("company") || "").trim(),
+        drawingType: String(form.get("drawing_type") || "").trim(),
+        standard: String(form.get("standard_code") || "").trim()
+      };
+      if (!project.id || !project.name) {
+        addEvent("项目保存失败：项目编号和项目名称不能为空");
+        return;
+      }
+      const existing = appState.projects.find((item) => item.id === project.id);
+      if (existing && existing.id !== getCurrentProjectId()) {
+        addEvent(`项目编号已存在，请直接打开项目 ${project.id}`);
+        return;
+      }
+      try {
+        const saved = await saveProjectRecord(project);
+        await setCurrentProjectContext(saved, { reloadContext: typeof window.__TAURI_INTERNALS__?.invoke === "function" });
+        addEvent(`项目已保存: ${saved.id} / ${saved.name}`);
+        setView("import");
+      } catch (error) {
+        addEvent(`项目保存失败: ${String(error)}`);
+      }
+    });
+  }
+
+  if (projectResetBtn) {
+    projectResetBtn.addEventListener("click", () => {
+      syncProjectFormValues();
+      addEvent("项目表单已重置为当前项目");
+    });
+  }
+
+  if (projectRefreshBtn) {
+    projectRefreshBtn.addEventListener("click", async () => {
+      if (typeof window.__TAURI_INTERNALS__?.invoke !== "function") {
+        renderProjectHome();
+        addEvent("当前为原型模式，项目列表已按本地状态刷新");
+        return;
+      }
+      try {
+        await reloadProjectsFromBackend(true);
+        addEvent("项目列表已刷新");
+      } catch (error) {
+        addEvent(`项目列表刷新失败: ${String(error)}`);
+      }
+    });
+  }
+
+  if (projectOpenImportBtn) {
+    projectOpenImportBtn.addEventListener("click", () => {
+      setView("import");
+    });
+  }
+
+  if (projectArchiveCurrentBtn) {
+    projectArchiveCurrentBtn.addEventListener("click", async () => {
+      const current = appState.currentProject;
+      if (!current?.id) return;
+      const nextArchived = !current.archivedAt;
+      try {
+        await archiveProjectRecord(current.id, nextArchived);
+        addEvent(`${nextArchived ? "项目已归档" : "项目已恢复"}: ${current.id}`);
+      } catch (error) {
+        addEvent(`项目归档操作失败: ${String(error)}`);
+      }
+    });
+  }
+
+  if (projectRecentBody) {
+    projectRecentBody.addEventListener("click", async (event) => {
+      const openBtn = event.target.closest("[data-project-open]");
+      if (openBtn) {
+        try {
+          const ok = await openProjectById(openBtn.dataset.projectOpen || "");
+          if (ok) {
+            addEvent(`已打开项目 ${openBtn.dataset.projectOpen || ""}`);
+          }
+        } catch (error) {
+          addEvent(`打开项目失败: ${String(error)}`);
+        }
+        return;
+      }
+      const archiveBtn = event.target.closest("[data-project-archive]");
+      if (!archiveBtn) return;
+      try {
+        const archived = String(archiveBtn.dataset.archived || "") === "1";
+        await archiveProjectRecord(archiveBtn.dataset.projectArchive || "", archived);
+        addEvent(`${archived ? "项目已归档" : "项目已恢复"}: ${archiveBtn.dataset.projectArchive || ""}`);
+      } catch (error) {
+        addEvent(`项目归档操作失败: ${String(error)}`);
+      }
+    });
+  }
+
+  if (parsePickFilesBtn) {
+    parsePickFilesBtn.addEventListener("click", async () => {
+      if (appState.parseBusy) return;
+      if (isTauriRuntime()) {
+        try {
+          const items = await pickDrawingFilesFromDesktop();
+          const summary = enqueueParseFiles(items);
+          if (!summary.added && !summary.duplicates) {
+            appendLog("未选择新的图纸文件");
+          }
+          if (summary.duplicates > 0) {
+            appendLog(`已跳过重复图纸 ${summary.duplicates} 份`);
+          }
+          return;
+        } catch (error) {
+          appendLog(`原生文件选择失败，改用浏览器文件输入: ${String(error)}`, "error");
+        }
+      }
+      parseFileInput?.click();
+    });
+  }
+
+  if (parseFileInput) {
+    parseFileInput.addEventListener("change", () => {
+      const files = [...(parseFileInput.files || [])];
+      if (!files.length) return;
+      const items = files.map((file) =>
+        buildParseQueueItem({
+          path: file.name,
+          fileName: file.name,
+          fileType: inferParseFileType(file.name),
+          sizeBytes: file.size,
+          previewUrl: URL.createObjectURL(file),
+          source: "browser",
+          virtual: true
+        })
+      );
+      const summary = enqueueParseFiles(items);
+      if (summary.duplicates > 0) {
+        appendLog(`已跳过重复图纸 ${summary.duplicates} 份`);
+      }
+      parseFileInput.value = "";
+    });
+  }
+
+  if (parseAddSampleBtn) {
+    parseAddSampleBtn.addEventListener("click", () => {
+      const summary = enqueueParseFiles(
+        SAMPLE_PARSE_FILES.map((item) => ({
+          ...item,
+          fileName: basenameFromPath(item.path),
+          virtual: true
+        }))
+      );
+      if (!summary.added) {
+        appendLog("示例图纸已全部在队列中");
+      }
+    });
+  }
+
+  if (parseClearQueueBtn) {
+    parseClearQueueBtn.addEventListener("click", () => {
+      if (!appState.parseQueue.length) return;
+      resetParseWorkspace();
+      addEvent("图纸解析队列已清空");
+    });
+  }
+
+  if (parseRunBtn) {
+    parseRunBtn.addEventListener("click", async () => {
+      const response = await runParseQueue();
+      if (response) {
+        addEvent(`图纸解析完成: ${response.trace_id || "-"} / ${String(response.status || "success").toUpperCase()}`);
+      }
+    });
+  }
+
+  if (parseRetryBtn) {
+    parseRetryBtn.addEventListener("click", async () => {
+      const response = await runParseQueue({ retryFailedOnly: true });
+      if (response) {
+        addEvent(`失败图纸已重试: ${response.trace_id || "-"}`);
+      }
+    });
+  }
+
+  if (parseAcceptAllBtn) {
+    parseAcceptAllBtn.addEventListener("click", () => {
+      const changed = acceptAllSuccessfulParseFiles();
+      if (!changed) {
+        addEvent("当前没有可接受的成功图纸");
+        return;
+      }
+      addEvent(`已接受全部成功图纸，共 ${changed} 份`);
+    });
+  }
+
+  if (parseLoadSeamsBtn) {
+    parseLoadSeamsBtn.addEventListener("click", () => {
+      loadParseResultIntoSeams();
+    });
+  }
+
+  if (parseLoadAcceptedBtn) {
+    parseLoadAcceptedBtn.addEventListener("click", () => {
+      loadParseResultIntoSeams({ acceptedOnly: true });
+    });
+  }
+
+  if (parseAcceptSelectedBtn) {
+    parseAcceptSelectedBtn.addEventListener("click", () => {
+      const selectedItem = getSelectedParseQueueItem();
+      if (!selectedItem) return;
+      setParseReviewStatus(selectedItem.id, "accepted");
+    });
+  }
+
+  if (parseResetSelectedBtn) {
+    parseResetSelectedBtn.addEventListener("click", () => {
+      const selectedItem = getSelectedParseQueueItem();
+      if (!selectedItem) return;
+      setParseReviewStatus(selectedItem.id, "pending");
+    });
+  }
+
+  if (parseLoadSelectedBtn) {
+    parseLoadSelectedBtn.addEventListener("click", () => {
+      loadParseResultIntoSeams({ selectedOnly: true });
+    });
+  }
+
+  if (parseFlagSeamBtn) {
+    parseFlagSeamBtn.addEventListener("click", () => {
+      setSelectedParseSeamReviewStatus("uncertain");
+    });
+  }
+
+  if (parseUnflagSeamBtn) {
+    parseUnflagSeamBtn.addEventListener("click", () => {
+      setSelectedParseSeamReviewStatus("pending");
+    });
+  }
+
+  if (parseFilterStatus) {
+    parseFilterStatus.addEventListener("change", () => {
+      appState.parseFilters.status = String(parseFilterStatus.value || "all");
+      renderParseWorkspace();
+      addEvent(`解析队列筛选已更新: 状态 ${parseFilterStatus.options[parseFilterStatus.selectedIndex]?.text || "全部"}`);
+    });
+  }
+
+  if (parseFilterReview) {
+    parseFilterReview.addEventListener("change", () => {
+      appState.parseFilters.review = String(parseFilterReview.value || "all");
+      renderParseWorkspace();
+      addEvent(`解析队列筛选已更新: 复核 ${parseFilterReview.options[parseFilterReview.selectedIndex]?.text || "全部"}`);
+    });
+  }
+
+  if (parseFilterResetBtn) {
+    parseFilterResetBtn.addEventListener("click", () => {
+      appState.parseFilters = { status: "all", review: "all" };
+      renderParseWorkspace();
+      addEvent("解析队列筛选已清除");
+    });
+  }
+
+  if (parseHistoryRefreshBtn) {
+    parseHistoryRefreshBtn.addEventListener("click", () => {
+      loadParseHistoryForProject(getCurrentProjectId());
+      renderParseWorkspace();
+      addEvent("解析任务历史已刷新");
+    });
+  }
+
+  if (parseSelectPrevBtn) {
+    parseSelectPrevBtn.addEventListener("click", () => {
+      const current = getSelectedParseQueueItem();
+      if (!current) return;
+      const index = getParseQueueIndex(current.id);
+      if (index <= 0) return;
+      setSelectedParseQueue(appState.parseQueue[index - 1].id);
+    });
+  }
+
+  if (parseSelectNextBtn) {
+    parseSelectNextBtn.addEventListener("click", () => {
+      const current = getSelectedParseQueueItem();
+      if (!current) return;
+      const index = getParseQueueIndex(current.id);
+      if (index < 0 || index >= appState.parseQueue.length - 1) return;
+      setSelectedParseQueue(appState.parseQueue[index + 1].id);
+    });
+  }
+
+  if (parsePreviewModeBtn) {
+    parsePreviewModeBtn.addEventListener("click", () => {
+      stopParseHotspotDrag({ announce: false });
+      setParsePreviewAddSeamMode(false, { silent: true });
+      appState.parsePreviewMode = appState.parsePreviewMode === "annotate" ? "browse" : "annotate";
+      renderParseSelectedFilePanel();
+      addEvent(`图纸预览已切换到${getParsePreviewModeMeta().label}`);
+    });
+  }
+
+  if (parseShortcutsBtn) {
+    parseShortcutsBtn.addEventListener("click", () => {
+      toggleParseShortcutPanel();
+    });
+  }
+
+  if (parseShortcutsCloseBtn) {
+    parseShortcutsCloseBtn.addEventListener("click", () => {
+      setParseShortcutPanelVisible(false);
+    });
+  }
+
+  if (parsePreviewRotateLeftBtn) {
+    parsePreviewRotateLeftBtn.addEventListener("click", () => {
+      rotateParsePreview(-90);
+    });
+  }
+
+  if (parsePreviewRotateRightBtn) {
+    parsePreviewRotateRightBtn.addEventListener("click", () => {
+      rotateParsePreview(90);
+    });
+  }
+
+  if (parsePreviewExpandBtn) {
+    parsePreviewExpandBtn.addEventListener("click", () => {
+      appState.parsePreviewExpanded = !appState.parsePreviewExpanded;
+      renderParseSelectedFilePanel();
+      addEvent(appState.parsePreviewExpanded ? "图纸预览已切换到扩展布局" : "图纸预览已恢复标准布局");
+    });
+  }
+
+  if (parsePreviewZoomOutBtn) {
+    parsePreviewZoomOutBtn.addEventListener("click", () => {
+      appState.parsePreviewZoom = clampParsePreviewZoom(appState.parsePreviewZoom - 20);
+      renderParseSelectedFilePanel();
+      addEvent(`图纸缩放调整为 ${formatParsePreviewZoom()}`);
+    });
+  }
+
+  if (parseAddSeamBtn) {
+    parseAddSeamBtn.addEventListener("click", () => {
+      if (appState.parsePreviewMode !== "annotate") {
+        appState.parsePreviewMode = "annotate";
+      }
+      toggleParsePreviewAddSeamMode();
+    });
+  }
+
+  if (parseDeleteSeamBtn) {
+    parseDeleteSeamBtn.addEventListener("click", () => {
+      if (!deleteSelectedManualParseSeam()) {
+        addEvent("当前选中项不是手动焊缝，无法删除");
+      }
+    });
+  }
+
+  if (parsePreviewZoomResetBtn) {
+    parsePreviewZoomResetBtn.addEventListener("click", () => {
+      appState.parsePreviewZoom = 100;
+      renderParseSelectedFilePanel();
+      addEvent("图纸缩放已重置为 100%");
+    });
+  }
+
+  if (parsePreviewZoomInBtn) {
+    parsePreviewZoomInBtn.addEventListener("click", () => {
+      appState.parsePreviewZoom = clampParsePreviewZoom(appState.parsePreviewZoom + 20);
+      renderParseSelectedFilePanel();
+      addEvent(`图纸缩放调整为 ${formatParsePreviewZoom()}`);
+    });
+  }
+
+  if (parseOptionsForm) {
+    parseOptionsForm.addEventListener("change", () => {
+      updateParseOptionsFromForm();
+      renderParseWorkspace();
+      addEvent(
+        `解析参数已更新: 符号 ${appState.parseOptions.detectWeldSymbols ? "开" : "关"} / 分区 ${
+          appState.parseOptions.detectSections ? "开" : "关"
+        } / ${appState.parseOptions.language}`
+      );
+    });
+  }
+
+  if (parseQueueBody) {
+    parseQueueBody.addEventListener("click", async (event) => {
+      const removeBtn = event.target.closest("[data-parse-remove]");
+      if (removeBtn) {
+        const queueId = String(removeBtn.dataset.parseRemove || "");
+        const target = appState.parseQueue.find((item) => item.id === queueId);
+        revokeParsePreviewUrl(target);
+        appState.parseQueue = appState.parseQueue.filter((item) => item.id !== queueId);
+        rebuildParseResultFromQueue(appState.parseResult?.traceId || "");
+        renderParseWorkspace();
+        addEvent(`已移除图纸: ${target?.fileName || target?.path || queueId}`);
+        return;
+      }
+
+      const retryBtn = event.target.closest("[data-parse-retry-item]");
+      if (retryBtn) {
+        const queueId = String(retryBtn.dataset.parseRetryItem || "");
+        const response = await runParseQueue({ targetIds: [queueId] });
+        if (response) {
+          addEvent(`图纸已单独重试: ${queueId}`);
+        }
+        return;
+      }
+
+      const row = event.target.closest("[data-parse-select]");
+      if (!row) return;
+      setSelectedParseQueue(row.dataset.parseSelect || "");
+    });
+  }
+
+  if (parseHistoryBody) {
+    parseHistoryBody.addEventListener("click", async (event) => {
+      const rerunBtn = event.target.closest("[data-parse-history-rerun]");
+      if (rerunBtn) {
+        const response = await rerunParseHistory(rerunBtn.dataset.parseHistoryRerun || "");
+        if (response) {
+          addEvent(`解析历史已再次执行: ${response.trace_id || "-"}`);
+        }
+        return;
+      }
+
+      const restoreBtn = event.target.closest("[data-parse-history-restore]");
+      if (restoreBtn) {
+        restoreParseHistoryQueue(restoreBtn.dataset.parseHistoryRestore || "");
+        return;
+      }
+
+      const optionsBtn = event.target.closest("[data-parse-history-options]");
+      if (optionsBtn) {
+        applyParseHistoryOptions(optionsBtn.dataset.parseHistoryOptions || "");
+        return;
+      }
+
+      const row = event.target.closest("[data-parse-history-select]");
+      if (!row) return;
+      setSelectedParseHistory(row.dataset.parseHistorySelect || "");
+    });
+  }
+
+  if (parsePreviewHotspots) {
+    parsePreviewHotspots.addEventListener("pointerdown", (event) => {
+      if (appState.parsePreviewMode !== "annotate") return;
+      const hotspot = event.target.closest("[data-parse-hotspot-kind][data-parse-hotspot-id]");
+      if (!hotspot) return;
+      const kind = String(hotspot.dataset.parseHotspotKind || "");
+      const itemId = String(hotspot.dataset.parseHotspotId || "");
+      if (!kind || !itemId) return;
+      if (kind === "seam") {
+        appState.parseSelectedSeamId = itemId;
+        appState.parseSelectedCandidateId = "";
+      } else if (kind === "candidate") {
+        appState.parseSelectedCandidateId = itemId;
+        appState.parseSelectedSeamId = "";
+      }
+      appState.parsePreviewDrag = {
+        kind,
+        itemId,
+        moved: false
+      };
+      renderParseSelectedFilePanel();
+      event.preventDefault();
+    });
+
+    parsePreviewHotspots.addEventListener("click", (event) => {
+      if (Date.now() < Number(appState.parsePreviewSuppressClickUntil || 0)) return;
+      if (appState.parsePreviewDrag?.moved) return;
+      const hotspot = event.target.closest("[data-parse-seam-select]");
+      if (hotspot) {
+        setSelectedParseSeam(hotspot.dataset.parseSeamSelect || "");
+        return;
+      }
+      const candidateHotspot = event.target.closest("[data-parse-candidate-select]");
+      if (candidateHotspot) {
+        setSelectedParseCandidate(candidateHotspot.dataset.parseCandidateSelect || "");
+        return;
+      }
+      if (appState.parsePreviewMode !== "annotate" || !appState.parsePreviewAddSeamMode) return;
+      const anchor = buildDragAnchorFromPointer(event, "seam", "");
+      if (!anchor) return;
+      if (createManualParseSeamAtAnchor(anchor)) {
+        setParsePreviewAddSeamMode(false, { silent: true });
+      }
+    });
+    parsePreviewHotspots.addEventListener("dblclick", (event) => {
+      const seamHotspot = event.target.closest("[data-parse-seam-select]");
+      if (seamHotspot) {
+        event.preventDefault();
+        openParseQuickEditModal("seam", seamHotspot.dataset.parseSeamSelect || "");
+        return;
+      }
+      const candidateHotspot = event.target.closest("[data-parse-candidate-select]");
+      if (candidateHotspot) {
+        event.preventDefault();
+        openParseQuickEditModal("candidate", candidateHotspot.dataset.parseCandidateSelect || "");
+        return;
+      }
+      if (appState.parsePreviewMode !== "annotate") return;
+      const hasSelectedSeam = Boolean(String(appState.parseSelectedSeamId || "").trim());
+      const hasSelectedCandidate = Boolean(String(appState.parseSelectedCandidateId || "").trim());
+      if (!hasSelectedSeam && !hasSelectedCandidate) {
+        addEvent("请先选中焊缝或候选，再在图纸上双击标注位置");
+        return;
+      }
+      const rect = parsePreviewHotspots.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const point = unrotatePreviewPoint({
+        x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+        y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
+      });
+      const anchor = {
+        x: point.x,
+        y: point.y,
+        w: hasSelectedSeam ? 0.12 : 0.1,
+        h: hasSelectedSeam ? 0.08 : 0.07,
+        page_index: Math.max(0, Number(appState.parsePreviewPageIndex) || 0)
+      };
+      setSelectedParseItemAnchor(anchor);
+    });
+  }
+
+  if (parseQuickCloseBtn) {
+    parseQuickCloseBtn.addEventListener("click", () => {
+      closeParseQuickEditModal();
+    });
+  }
+
+  if (parseQuickCancelBtn) {
+    parseQuickCancelBtn.addEventListener("click", () => {
+      closeParseQuickEditModal();
+    });
+  }
+
+  if (parseQuickSaveBtn) {
+    parseQuickSaveBtn.addEventListener("click", () => {
+      saveParseQuickEditModal();
+    });
+  }
+
+  if (parseQuickBackdrop) {
+    parseQuickBackdrop.addEventListener("click", () => {
+      closeParseQuickEditModal();
+    });
+  }
+
+  window.addEventListener("pointermove", (event) => {
+    const drag = appState.parsePreviewDrag;
+    if (!drag || appState.parsePreviewMode !== "annotate") return;
+    const anchor = buildDragAnchorFromPointer(event, drag.kind, drag.itemId);
+    if (!anchor) return;
+    drag.moved = true;
+    setParseItemAnchorById(drag.kind, drag.itemId, anchor, {
+      silent: true,
+      render: true,
+      announce: false
+    });
   });
 
-  document.querySelector("#btn-parse").addEventListener("click", simulateParse);
-  document.querySelector("#btn-retry-parse").addEventListener("click", () => appendLog("重试任务已入队"));
+  window.addEventListener("pointerup", () => {
+    stopParseHotspotDrag({ announce: true });
+  });
+
+  window.addEventListener("pointercancel", () => {
+    stopParseHotspotDrag({ announce: true });
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (appState.view !== "import") return;
+    if (isTypingTarget(event.target) && event.key !== "Escape") return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    const key = String(event.key || "");
+    const normalizedKey = key.toLowerCase();
+
+    if (uiState.parseQuickEdit) {
+      if (normalizedKey === "escape") {
+        event.preventDefault();
+        closeParseQuickEditModal();
+      }
+      return;
+    }
+
+    const selectedItem = getSelectedParseQueueItem();
+
+    if (normalizedKey === "escape") {
+      if (appState.parseShortcutPanelVisible) {
+        event.preventDefault();
+        setParseShortcutPanelVisible(false);
+        return;
+      }
+      if (appState.parsePreviewAddSeamMode) {
+        event.preventDefault();
+        setParsePreviewAddSeamMode(false);
+      }
+      return;
+    }
+
+    if (!selectedItem) return;
+
+    if (normalizedKey === "arrowleft") {
+      const index = getParseQueueIndex(selectedItem.id);
+      if (index > 0) {
+        event.preventDefault();
+        setSelectedParseQueue(appState.parseQueue[index - 1].id);
+      }
+      return;
+    }
+
+    if (normalizedKey === "arrowright") {
+      const index = getParseQueueIndex(selectedItem.id);
+      if (index >= 0 && index < appState.parseQueue.length - 1) {
+        event.preventDefault();
+        setSelectedParseQueue(appState.parseQueue[index + 1].id);
+      }
+      return;
+    }
+
+    if (normalizedKey === "r") {
+      event.preventDefault();
+      rotateParsePreview(event.shiftKey ? -90 : 90);
+      return;
+    }
+
+    if (normalizedKey === "=" || normalizedKey === "+") {
+      if (selectedItem.fileType !== "pdf") return;
+      event.preventDefault();
+      appState.parsePreviewZoom = clampParsePreviewZoom(appState.parsePreviewZoom + 20);
+      renderParseSelectedFilePanel();
+      addEvent(`图纸缩放调整为 ${formatParsePreviewZoom()}`);
+      return;
+    }
+
+    if (normalizedKey === "-" || normalizedKey === "_") {
+      if (selectedItem.fileType !== "pdf") return;
+      event.preventDefault();
+      appState.parsePreviewZoom = clampParsePreviewZoom(appState.parsePreviewZoom - 20);
+      renderParseSelectedFilePanel();
+      addEvent(`图纸缩放调整为 ${formatParsePreviewZoom()}`);
+      return;
+    }
+
+    if (normalizedKey === "0") {
+      if (selectedItem.fileType !== "pdf") return;
+      event.preventDefault();
+      appState.parsePreviewZoom = 100;
+      renderParseSelectedFilePanel();
+      addEvent("图纸缩放已重置为 100%");
+      return;
+    }
+
+    if (normalizedKey === "m") {
+      event.preventDefault();
+      stopParseHotspotDrag({ announce: false });
+      setParsePreviewAddSeamMode(false, { silent: true });
+      appState.parsePreviewMode = appState.parsePreviewMode === "annotate" ? "browse" : "annotate";
+      renderParseSelectedFilePanel();
+      addEvent(`图纸预览已切换到${getParsePreviewModeMeta().label}`);
+      return;
+    }
+
+    if (normalizedKey === "n") {
+      event.preventDefault();
+      if (appState.parsePreviewMode !== "annotate") {
+        appState.parsePreviewMode = "annotate";
+      }
+      toggleParsePreviewAddSeamMode();
+      return;
+    }
+
+    if (normalizedKey === "f") {
+      event.preventDefault();
+      appState.parsePreviewExpanded = !appState.parsePreviewExpanded;
+      renderParseSelectedFilePanel();
+      addEvent(appState.parsePreviewExpanded ? "图纸预览已切换到扩展布局" : "图纸预览已恢复标准布局");
+      return;
+    }
+
+    if (key === "?" || (normalizedKey === "/" && event.shiftKey)) {
+      event.preventDefault();
+      toggleParseShortcutPanel();
+      return;
+    }
+
+    if (normalizedKey === "delete" || normalizedKey === "backspace") {
+      if (!appState.parseSelectedSeamId) return;
+      if (!deleteSelectedManualParseSeam()) {
+        addEvent("仅支持删除手动新增的焊缝");
+      }
+    }
+  });
+
+  if (parseFileSeamBody) {
+    parseFileSeamBody.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-parse-seam-row]");
+      if (!row) return;
+      setSelectedParseSeam(row.dataset.parseSeamRow || "");
+    });
+    parseFileSeamBody.addEventListener("dblclick", (event) => {
+      const row = event.target.closest("[data-parse-seam-row]");
+      if (!row) return;
+      openParseQuickEditModal("seam", row.dataset.parseSeamRow || "");
+    });
+  }
+
+  if (parseFileCandidateBody) {
+    parseFileCandidateBody.addEventListener("click", (event) => {
+      const acceptBtn = event.target.closest("[data-parse-candidate-accept]");
+      if (acceptBtn) {
+        setParseCandidateReviewStatus(acceptBtn.dataset.parseCandidateAccept || "", "accepted");
+        return;
+      }
+      const rejectBtn = event.target.closest("[data-parse-candidate-reject]");
+      if (rejectBtn) {
+        setParseCandidateReviewStatus(rejectBtn.dataset.parseCandidateReject || "", "rejected");
+        return;
+      }
+      const resetBtn = event.target.closest("[data-parse-candidate-reset]");
+      if (resetBtn) {
+        setParseCandidateReviewStatus(resetBtn.dataset.parseCandidateReset || "", "pending");
+        return;
+      }
+      const row = event.target.closest("[data-parse-candidate-row]");
+      if (!row) return;
+      setSelectedParseCandidate(row.dataset.parseCandidateRow || "");
+    });
+    parseFileCandidateBody.addEventListener("dblclick", (event) => {
+      const row = event.target.closest("[data-parse-candidate-row]");
+      if (!row) return;
+      openParseQuickEditModal("candidate", row.dataset.parseCandidateRow || "");
+    });
+  }
+
+  if (parseDropzone) {
+    const dropPanel = parseDropzone.querySelector(".dropzone-panel");
+    if (dropPanel) {
+      dropPanel.addEventListener("click", () => {
+        if (appState.parseBusy) return;
+        parsePickFilesBtn?.click();
+      });
+    }
+    ["dragenter", "dragover"].forEach((eventName) => {
+      parseDropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropPanel?.classList.add("is-dragover");
+      });
+    });
+    ["dragleave", "dragend", "drop"].forEach((eventName) => {
+      parseDropzone.addEventListener(eventName, () => {
+        dropPanel?.classList.remove("is-dragover");
+      });
+    });
+    parseDropzone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      if (appState.parseBusy) return;
+      const files = [...(event.dataTransfer?.files || [])];
+      if (!files.length) return;
+      const items = files.map((file) =>
+        buildParseQueueItem({
+          path: file.name,
+          fileName: file.name,
+          fileType: inferParseFileType(file.name),
+          sizeBytes: file.size,
+          previewUrl: URL.createObjectURL(file),
+          source: "drop",
+          virtual: true
+        })
+      );
+      const summary = enqueueParseFiles(items);
+      if (summary.added) {
+        addEvent(`已拖入图纸 ${summary.added} 份`);
+      }
+    });
+  }
 
   const addSeamBtn = document.querySelector("#btn-add-seam");
   if (addSeamBtn) {
@@ -4266,11 +8038,13 @@ function init() {
   syncRematchFreezeButtonState();
   syncExportReviewChecklistButtonState();
   syncMasterFocusBanner();
+  renderProjectHome();
+  resetParseWorkspace();
   setStatusSnapshot();
   initHandlers();
-  bootstrapMasterDataFromBackend();
-  refreshExecutionHistory(true);
+  bootstrapProjectContext();
   startClock();
 }
 
 init();
+

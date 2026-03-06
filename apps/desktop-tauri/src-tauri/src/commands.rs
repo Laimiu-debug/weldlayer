@@ -1,19 +1,27 @@
 use app_service::{
+    archive_project as archive_project_service,
     delete_consumable_batch, delete_pqr_profile, delete_weld_seam, delete_welder_profile,
     freeze_match_baseline as freeze_match_baseline_service,
+    get_project as get_project_service,
     get_match_audit_bundle as get_match_audit_bundle_service,
     get_match_baseline_impact as get_match_baseline_impact_service,
+    list_projects as list_projects_service,
     list_audit_logs as list_audit_logs_service, list_consumable_batches,
     list_match_baselines as list_match_baselines_service,
     list_match_reports as list_match_reports_service, list_pqr_profiles, list_weld_seams,
     list_welder_profiles, run_match_and_persist_with_master_data, run_parse_via_sidecar,
+    upsert_project as upsert_project_service,
     upsert_consumable_batch, upsert_pqr_profile, upsert_weld_seam, upsert_welder_profile,
     SidecarConfig,
 };
-use contracts::matching::{ConsumableBatch, MatchRequest, PqrCandidate, WeldSeam, WelderCandidate};
+use contracts::matching::{
+    ConsumableBatch, MatchRequest, PqrCandidate, StandardCode, WeldSeam, WelderCandidate,
+};
 use contracts::parser::ParseRequest;
+use serde::Serialize;
 use std::env;
 use std::path::{Path, PathBuf};
+use base64::Engine as _;
 
 const SIDECAR_RELATIVE_PATH: &str = "sidecar/parser-python/parser_sidecar.py";
 
@@ -80,6 +88,179 @@ fn build_sidecar_config() -> Result<SidecarConfig, String> {
         interpreter,
         script_path,
     })
+}
+
+fn parse_standard_code(value: &str) -> Result<StandardCode, String> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "ASME_IX" | "ASMEIX" | "ASME-IX" | "ASME IX" => Ok(StandardCode::AsmeIx),
+        "CN_GB" | "CNGB" | "CN-GB" | "CN GB" => Ok(StandardCode::CnGb),
+        other => Err(format!("unsupported standard code: {other}")),
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct PickedDrawingFile {
+    path: String,
+    file_name: String,
+    file_type: String,
+    size_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct DrawingPreviewPayload {
+    mime_type: String,
+    base64: String,
+}
+
+fn infer_drawing_file_type(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => Some("pdf"),
+        Some("dwg") => Some("dwg"),
+        _ => None,
+    }
+}
+
+fn infer_preview_mime_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        _ => "application/octet-stream",
+    }
+}
+
+#[tauri::command]
+pub fn upsert_project(
+    db_path: String,
+    project_id: String,
+    project_name: String,
+    company_name: String,
+    drawing_type: String,
+    standard_code: String,
+) -> Result<String, String> {
+    let standard_code = parse_standard_code(&standard_code)?;
+    upsert_project_service(
+        &db_path,
+        &project_id,
+        &project_name,
+        &company_name,
+        &drawing_type,
+        &standard_code,
+    )
+    .map_err(|e| format!("upsert project failed: {e}"))?;
+    Ok("{\"ok\":true}".to_string())
+}
+
+#[tauri::command]
+pub fn get_project(db_path: String, project_id: String) -> Result<String, String> {
+    let row = get_project_service(&db_path, &project_id)
+        .map_err(|e| format!("get project failed: {e}"))?;
+    serde_json::to_string(&row.map(|item| {
+        serde_json::json!({
+            "project_id": item.project_id,
+            "project_name": item.project_name,
+            "company_name": item.company_name,
+            "drawing_type": item.drawing_type,
+            "standard_code": format!("{:?}", item.standard_code),
+            "archived_at": item.archived_at,
+            "updated_at": item.updated_at
+        })
+    }))
+    .map_err(|e| format!("serialize project failed: {e}"))
+}
+
+#[tauri::command]
+pub fn list_projects(
+    db_path: String,
+    limit: Option<usize>,
+    include_archived: Option<bool>,
+) -> Result<String, String> {
+    let rows = list_projects_service(&db_path, limit.unwrap_or(20), include_archived.unwrap_or(true))
+        .map_err(|e| format!("list projects failed: {e}"))?;
+    let payload = rows
+        .into_iter()
+        .map(|item| {
+            serde_json::json!({
+                "project_id": item.project_id,
+                "project_name": item.project_name,
+                "company_name": item.company_name,
+                "drawing_type": item.drawing_type,
+                "standard_code": format!("{:?}", item.standard_code),
+                "archived_at": item.archived_at,
+                "updated_at": item.updated_at
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&payload).map_err(|e| format!("serialize project list failed: {e}"))
+}
+
+#[tauri::command]
+pub fn archive_project(
+    db_path: String,
+    project_id: String,
+    archived: Option<bool>,
+) -> Result<String, String> {
+    let archived = archived.unwrap_or(true);
+    let changed = archive_project_service(&db_path, &project_id, archived)
+        .map_err(|e| format!("archive project failed: {e}"))?;
+    serde_json::to_string(&serde_json::json!({ "changed": changed, "archived": archived }))
+        .map_err(|e| format!("serialize archive project result failed: {e}"))
+}
+
+#[tauri::command]
+pub fn pick_drawing_files() -> Result<String, String> {
+    let files = rfd::FileDialog::new()
+        .add_filter("Drawing Files", &["pdf", "dwg"])
+        .pick_files()
+        .unwrap_or_default();
+
+    let payload = files
+        .into_iter()
+        .filter_map(|path| {
+            let file_type = infer_drawing_file_type(&path)?;
+            let metadata = std::fs::metadata(&path).ok();
+            Some(PickedDrawingFile {
+                path: path.to_string_lossy().into_owned(),
+                file_name: path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                file_type: file_type.to_string(),
+                size_bytes: metadata.map(|value| value.len()).unwrap_or(0),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::to_string(&payload).map_err(|e| format!("serialize picked drawing files failed: {e}"))
+}
+
+#[tauri::command]
+pub fn read_drawing_preview(path: String) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("drawing preview path is empty".to_string());
+    }
+
+    let file_path = PathBuf::from(trimmed);
+    let bytes = std::fs::read(&file_path)
+        .map_err(|e| format!("read drawing preview failed for {}: {e}", file_path.display()))?;
+    let payload = DrawingPreviewPayload {
+        mime_type: infer_preview_mime_type(&file_path).to_string(),
+        base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+    };
+    serde_json::to_string(&payload).map_err(|e| format!("serialize drawing preview failed: {e}"))
 }
 
 #[tauri::command]
@@ -238,8 +419,12 @@ pub fn delete_seam(db_path: String, project_id: String, weld_id: String) -> Resu
 }
 
 #[tauri::command]
-pub fn list_match_reports(db_path: String, limit: Option<usize>) -> Result<String, String> {
-    let rows = list_match_reports_service(&db_path, limit.unwrap_or(20))
+pub fn list_match_reports(
+    db_path: String,
+    project_id: Option<String>,
+    limit: Option<usize>,
+) -> Result<String, String> {
+    let rows = list_match_reports_service(&db_path, project_id.as_deref(), limit.unwrap_or(20))
         .map_err(|e| format!("list match reports failed: {e}"))?;
     let payload = rows
         .into_iter()
@@ -259,8 +444,12 @@ pub fn list_match_reports(db_path: String, limit: Option<usize>) -> Result<Strin
 }
 
 #[tauri::command]
-pub fn list_audit_logs(db_path: String, limit: Option<usize>) -> Result<String, String> {
-    let rows = list_audit_logs_service(&db_path, limit.unwrap_or(20))
+pub fn list_audit_logs(
+    db_path: String,
+    project_id: Option<String>,
+    limit: Option<usize>,
+) -> Result<String, String> {
+    let rows = list_audit_logs_service(&db_path, project_id.as_deref(), limit.unwrap_or(20))
         .map_err(|e| format!("list audit logs failed: {e}"))?;
     let payload = rows
         .into_iter()
@@ -365,5 +554,18 @@ mod tests {
             resolve_sidecar_script_path().expect("sidecar script should exist in repository");
         assert!(Path::new(&script_path).is_file());
         assert!(script_path.ends_with("parser_sidecar.py"));
+    }
+
+    #[test]
+    fn infer_drawing_file_type_recognizes_supported_extensions() {
+        assert_eq!(
+            infer_drawing_file_type(Path::new("C:/demo/a.PDF")),
+            Some("pdf")
+        );
+        assert_eq!(
+            infer_drawing_file_type(Path::new("C:/demo/a.dwg")),
+            Some("dwg")
+        );
+        assert_eq!(infer_drawing_file_type(Path::new("C:/demo/a.txt")), None);
     }
 }

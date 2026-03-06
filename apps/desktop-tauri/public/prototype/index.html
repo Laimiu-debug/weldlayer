@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -81,10 +81,19 @@
             <section class="view is-visible" data-view-panel="project">
               <div class="grid two">
                 <article class="card hero">
-                  <p class="card-kicker">当前项目</p>
-                  <h2>压力管道改造 A-26</h2>
-                  <p>目标体系：ASME IX。数据模式：本地单机。状态：图纸解析完成，等待匹配确认。</p>
-                  <div class="pill-row">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">当前项目</p>
+                      <p class="mono" id="project-current-id">PRJ-PROTOTYPE-001</p>
+                    </div>
+                    <div class="button-row">
+                      <button class="ghost" id="btn-project-open-import">进入导入页</button>
+                      <button class="ghost" id="btn-project-archive-current">归档当前项目</button>
+                    </div>
+                  </div>
+                  <h2 id="project-current-name">压力管道改造 A-26</h2>
+                  <p id="project-current-summary">目标体系：ASME IX。数据模式：本地单机。状态：图纸解析完成，等待匹配确认。</p>
+                  <div class="pill-row" id="project-current-pills">
                     <span class="pill">PDF + DWG</span>
                     <span class="pill">离线可用</span>
                     <span class="pill">模板: TPL-ASME-001</span>
@@ -92,11 +101,25 @@
                 </article>
 
                 <article class="card">
-                  <p class="card-kicker">新建项目</p>
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">项目信息</p>
+                      <p class="mono" id="project-form-mode">新建项目</p>
+                    </div>
+                    <button class="ghost" id="btn-project-reset">重置表单</button>
+                  </div>
                   <form class="form-grid" id="project-form">
                     <label>项目名称<input name="project_name" value="新建焊接项目" /></label>
                     <label>项目编号<input name="project_code" value="PRJ-2026-001" /></label>
                     <label>企业名称<input name="company" value="Laimiu Fabrication" /></label>
+                    <label>
+                      图纸类型
+                      <select name="drawing_type">
+                        <option>PDF + DWG</option>
+                        <option>PDF</option>
+                        <option>DWG</option>
+                      </select>
+                    </label>
                     <label>
                       标准体系
                       <select name="standard_code">
@@ -104,7 +127,7 @@
                         <option>CN_GB</option>
                       </select>
                     </label>
-                    <button class="primary full" type="submit">创建并进入导入流程</button>
+                    <button class="primary full" type="submit">保存项目并进入导入流程</button>
                   </form>
                 </article>
               </div>
@@ -120,46 +143,393 @@
                 </article>
                 <article class="card">
                   <p class="card-kicker">最近匹配分</p>
-                  <h3>0.86</h3>
-                </article>
-              </div>
-            </section>
-
-            <section class="view" data-view-panel="import">
-              <div class="grid two">
-                <article class="card dropzone">
-                  <p class="card-kicker">图纸导入</p>
-                  <h2>拖拽 PDF / DWG 到此处</h2>
-                  <p>支持复杂焊接符号与剖视信息识别</p>
-                  <div class="button-row">
-                    <button class="primary" id="btn-parse">开始解析</button>
-                    <button class="ghost" id="btn-retry-parse">失败重试</button>
-                  </div>
-                  <div class="progress-wrap">
-                    <div class="progress-bar" id="parse-progress-bar"></div>
-                  </div>
-                  <p class="mono" id="parse-progress-label">等待执行</p>
-                </article>
-
-                <article class="card">
-                  <p class="card-kicker">文件队列</p>
-                  <ul class="queue-list">
-                    <li><span>pressure_line_01.pdf</span><strong>Ready</strong></li>
-                    <li><span>vessel_joint_revB.dwg</span><strong>Ready</strong></li>
-                    <li><span>support_branch_03.dwg</span><strong>Queued</strong></li>
-                  </ul>
+                  <h3 id="project-last-score">0.86</h3>
                 </article>
               </div>
 
               <article class="card">
-                <p class="card-kicker">解析日志</p>
-                <div class="log-panel" id="parse-log">
-                  <p>[09:30:01] 初始化图纸解析任务</p>
-                  <p>[09:30:03] 载入焊接符号识别模型</p>
+                <div class="toolbar">
+                  <div>
+                    <p class="card-kicker">最近项目</p>
+                    <p class="mono" id="project-recent-caption">按最近更新时间排序，可直接打开或归档</p>
+                  </div>
+                  <button class="ghost" id="btn-project-refresh">刷新项目列表</button>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>更新时间</th>
+                        <th>项目编号</th>
+                        <th>项目名称</th>
+                        <th>企业</th>
+                        <th>图纸类型</th>
+                        <th>标准</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="project-recent-body"></tbody>
+                  </table>
                 </div>
               </article>
             </section>
 
+            <section class="view" data-view-panel="import">
+              <div class="grid three import-grid">
+                <article class="card dropzone import-control-card" id="parse-dropzone">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">图纸导入</p>
+                      <h2>导入 PDF / DWG 进入解析队列</h2>
+                    </div>
+                    <div class="button-row">
+                      <button class="ghost" id="btn-pick-parse-files">选择图纸</button>
+                      <button class="ghost" id="btn-parse-add-sample">添加示例</button>
+                      <button class="ghost" id="btn-clear-parse-queue">清空队列</button>
+                    </div>
+                  </div>
+                  <input
+                    id="parse-file-input"
+                    type="file"
+                    accept=".pdf,.dwg,application/pdf"
+                    multiple
+                    hidden
+                  />
+                  <div class="dropzone-panel">
+                    <p class="dropzone-title">拖入图纸到此处，或点击“选择图纸”</p>
+                    <p class="dropzone-subtitle">仅支持 PDF / DWG，重复文件会自动去重。</p>
+                  </div>
+                  <p class="mono">
+                    桌面端优先使用原生文件选择器，浏览器原型模式下可直接选择文件并走模拟解析。
+                  </p>
+                  <div class="progress-wrap">
+                    <div class="progress-bar" id="parse-progress-bar"></div>
+                  </div>
+                  <p class="mono" id="parse-progress-label">等待加入解析队列</p>
+                  <div class="toolbar import-toolbar">
+                    <div>
+                      <p class="card-kicker">解析状态</p>
+                      <p class="mono" id="parse-status">未开始</p>
+                    </div>
+                    <div class="button-row">
+                      <button class="primary" id="btn-parse">开始解析</button>
+                      <button class="ghost" id="btn-retry-parse">失败重试</button>
+                      <button class="ghost" id="btn-parse-accept-all">接受全部成功图纸</button>
+                      <button class="ghost" id="btn-parse-load-accepted">仅载入已接受</button>
+                      <button class="primary" id="btn-parse-load-seams">载入焊缝确认</button>
+                    </div>
+                  </div>
+                  <p class="mono" id="parse-summary">队列 0 份图纸，尚未生成焊缝预览</p>
+                </article>
+
+                <article class="card">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">文件队列</p>
+                      <p class="mono" id="parse-queue-caption">
+                        file_path / file_type / parse_status / progress / error_code
+                      </p>
+                    </div>
+                  </div>
+                  <div class="parse-filter-row">
+                    <label>
+                      解析状态
+                      <select id="parse-filter-status">
+                        <option value="all">全部</option>
+                        <option value="ready">待解析</option>
+                        <option value="parsing">解析中</option>
+                        <option value="success">成功</option>
+                        <option value="failed">失败</option>
+                      </select>
+                    </label>
+                    <label>
+                      复核状态
+                      <select id="parse-filter-review">
+                        <option value="all">全部</option>
+                        <option value="pending">待确认</option>
+                        <option value="accepted">已接受</option>
+                      </select>
+                    </label>
+                    <button class="ghost small" id="btn-parse-filter-reset">清除筛选</button>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>文件路径</th>
+                          <th>类型</th>
+                          <th>状态</th>
+                          <th>进度</th>
+                          <th>错误码</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="parse-queue-body"></tbody>
+                    </table>
+                  </div>
+                </article>
+
+                <article class="card">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">解析参数</p>
+                      <p class="mono">识别范围和语言在每次解析时生效</p>
+                    </div>
+                  </div>
+                  <form class="form-grid compact" id="parse-options-form">
+                    <label class="toggle-field">
+                      <span>识别焊接符号</span>
+                      <input id="parse-option-detect-symbols" type="checkbox" checked />
+                    </label>
+                    <label class="toggle-field">
+                      <span>识别剖视与分区</span>
+                      <input id="parse-option-detect-sections" type="checkbox" checked />
+                    </label>
+                    <label>
+                      语言
+                      <select id="parse-option-language">
+                        <option value="zh-CN">中文</option>
+                        <option value="en-US">English</option>
+                      </select>
+                    </label>
+                  </form>
+
+                  <div class="import-preview-shell">
+                    <div class="toolbar">
+                      <div>
+                        <p class="card-kicker">焊缝预览</p>
+                        <p class="mono" id="parse-preview-caption">尚未生成解析结果</p>
+                      </div>
+                    </div>
+                    <p class="mono" id="parse-preview-empty">
+                      解析完成后，将在这里预览提取到的焊缝信息和错误明细。
+                    </p>
+                    <div id="parse-preview-content" class="hidden">
+                      <div class="table-wrap">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>焊缝号</th>
+                              <th>图纸引用</th>
+                              <th>符号</th>
+                              <th>材质</th>
+                              <th>厚度(mm)</th>
+                              <th>位置</th>
+                              <th>置信度</th>
+                            </tr>
+                          </thead>
+                          <tbody id="parse-preview-body"></tbody>
+                        </table>
+                      </div>
+                      <div class="table-wrap">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>候选ID</th>
+                              <th>图纸引用</th>
+                              <th>候选类型</th>
+                              <th>字段猜测</th>
+                              <th>置信度</th>
+                              <th>复核</th>
+                            </tr>
+                          </thead>
+                          <tbody id="parse-preview-candidate-body"></tbody>
+                        </table>
+                      </div>
+                      <div class="error-stack" id="parse-error-list"></div>
+                    </div>
+                  </div>
+                </article>
+              </div>
+
+              <article class="card parse-detail-card">
+                <div class="toolbar">
+                  <div>
+                    <p class="card-kicker">图纸预览与文件级结果</p>
+                    <h3 id="parse-selected-title">尚未选择图纸</h3>
+                    <p class="mono" id="parse-selected-meta">点击文件队列中的图纸查看详情和焊缝定位。</p>
+                  </div>
+                </div>
+
+                <div class="parse-detail-grid" id="parse-detail-grid">
+                  <div class="parse-preview-stage">
+                    <div class="parse-preview-canvas" id="parse-preview-canvas">
+                      <div class="parse-preview-grid"></div>
+                      <div class="parse-preview-toolbar">
+                        <div class="parse-preview-toolbar-group">
+                          <button class="ghost small" id="btn-parse-select-prev">上一份</button>
+                          <button class="ghost small" id="btn-parse-select-next">下一份</button>
+                          <button class="ghost small" id="btn-parse-preview-expand">放大预览</button>
+                        </div>
+                        <div class="parse-preview-toolbar-group">
+                          <button class="ghost small" id="btn-parse-preview-mode">切换到标注模式</button>
+                          <button class="ghost small" id="btn-parse-shortcuts">快捷键</button>
+                          <button class="ghost small" id="btn-parse-preview-rotate-left">左转</button>
+                          <button class="ghost small" id="btn-parse-preview-rotate-right">右转</button>
+                          <button class="ghost small" id="btn-parse-preview-zoom-out">缩小</button>
+                          <button class="ghost small" id="btn-parse-preview-zoom-reset">100%</button>
+                          <button class="ghost small" id="btn-parse-preview-zoom-in">放大</button>
+                        </div>
+                      </div>
+                      <div class="parse-preview-scroll" id="parse-preview-scroll">
+                        <div class="parse-preview-document hidden" id="parse-preview-document">
+                          <canvas id="parse-preview-surface" class="parse-preview-surface"></canvas>
+                          <div class="parse-preview-hotspots" id="parse-preview-hotspots"></div>
+                        </div>
+                      </div>
+                      <div class="parse-preview-actionbar">
+                        <button class="ghost small" id="btn-parse-add-seam">新增焊缝</button>
+                        <button class="ghost small" id="btn-parse-delete-seam">删除手动焊缝</button>
+                        <button class="ghost small" id="btn-parse-accept-selected">接受当前图纸</button>
+                        <button class="ghost small" id="btn-parse-reset-selected">退回待确认</button>
+                        <button class="ghost small" id="btn-parse-flag-seam">标记当前焊缝可疑</button>
+                        <button class="ghost small" id="btn-parse-unflag-seam">取消可疑标记</button>
+                        <button class="ghost small" id="btn-parse-load-selected">仅载入当前图纸</button>
+                      </div>
+                      <section class="parse-shortcut-panel hidden" id="parse-shortcut-panel">
+                        <header>
+                          <strong>快捷键</strong>
+                          <button class="ghost small" id="btn-parse-shortcuts-close">关闭</button>
+                        </header>
+                        <ul>
+                          <li><span>R / Shift+R</span><strong>旋转图纸</strong></li>
+                          <li><span>+ / - / 0</span><strong>缩放与重置</strong></li>
+                          <li><span>M</span><strong>切换标注模式</strong></li>
+                          <li><span>N</span><strong>新增焊缝模式</strong></li>
+                          <li><span>Del</span><strong>删除手动焊缝</strong></li>
+                          <li><span>F</span><strong>放大预览</strong></li>
+                          <li><span>?</span><strong>打开快捷键面板</strong></li>
+                          <li><span>Esc</span><strong>退出新增焊缝</strong></li>
+                          <li><span>← / →</span><strong>上一份 / 下一份</strong></li>
+                        </ul>
+                      </section>
+                      <div class="parse-preview-canvas-empty" id="parse-preview-canvas-empty">
+                        当前未选中图纸，或该图纸还没有解析结果。
+                      </div>
+                    </div>
+                    <p class="mono parse-preview-help" id="parse-preview-help">
+                      当前仅显示占位画布。选中焊缝或候选后，在图纸区域双击可手动标注位置。
+                    </p>
+                    <p class="mono parse-preview-shortcuts" id="parse-preview-shortcuts">
+                      快捷键：R/Shift+R 旋转，+/- 缩放，0 重置，M 标注模式，N 新增焊缝，F 放大预览，Esc 退出新增。
+                    </p>
+                    <div class="parse-preview-legend">
+                      <span><i class="legend-dot ok"></i> 已提取焊缝</span>
+                      <span><i class="legend-dot warn"></i> 低置信度焊缝</span>
+                      <span><i class="legend-dot danger"></i> 解析失败</span>
+                    </div>
+                  </div>
+
+                  <div class="parse-file-side" id="parse-file-side">
+                    <div class="parse-file-stat-grid">
+                      <article class="parse-file-stat">
+                        <p class="card-kicker">文件状态</p>
+                        <h4 id="parse-file-status">-</h4>
+                      </article>
+                      <article class="parse-file-stat">
+                        <p class="card-kicker">焊缝数</p>
+                        <h4 id="parse-file-seam-count">0</h4>
+                      </article>
+                      <article class="parse-file-stat">
+                        <p class="card-kicker">错误数</p>
+                        <h4 id="parse-file-error-count">0</h4>
+                      </article>
+                      <article class="parse-file-stat">
+                        <p class="card-kicker">候选数</p>
+                        <h4 id="parse-file-candidate-count">0</h4>
+                      </article>
+                      <article class="parse-file-stat">
+                        <p class="card-kicker">文件来源</p>
+                        <h4 id="parse-file-source">-</h4>
+                      </article>
+                    </div>
+
+                    <div class="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>焊缝号</th>
+                            <th>符号</th>
+                            <th>材质</th>
+                            <th>厚度</th>
+                            <th>位置</th>
+                            <th>置信度</th>
+                            <th>复核</th>
+                          </tr>
+                        </thead>
+                        <tbody id="parse-file-seam-body"></tbody>
+                      </table>
+                    </div>
+
+                    <div class="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>候选ID</th>
+                            <th>接头类型</th>
+                            <th>字段猜测</th>
+                            <th>置信度</th>
+                            <th>复核</th>
+                            <th>操作</th>
+                          </tr>
+                        </thead>
+                        <tbody id="parse-file-candidate-body"></tbody>
+                      </table>
+                    </div>
+
+                    <div class="error-stack" id="parse-file-error-list"></div>
+                  </div>
+                </div>
+              </article>
+
+              <div class="grid two parse-secondary-grid">
+                <article class="card">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">解析任务历史</p>
+                      <p class="mono" id="parse-history-caption">按项目保存最近解析批次，可回填参数或恢复队列</p>
+                    </div>
+                    <button class="ghost small" id="btn-parse-history-refresh">刷新历史</button>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>完成时间</th>
+                          <th>Trace</th>
+                          <th>状态</th>
+                          <th>文件</th>
+                          <th>焊缝 / 错误</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="parse-history-body"></tbody>
+                    </table>
+                  </div>
+                  <div class="parse-history-detail" id="parse-history-detail">
+                    <p class="mono" id="parse-history-detail-empty">当前项目还没有解析历史。</p>
+                    <div id="parse-history-detail-content" class="hidden">
+                      <p class="card-kicker">历史详情</p>
+                      <h4 id="parse-history-detail-title">-</h4>
+                      <p class="mono" id="parse-history-detail-meta">-</p>
+                      <div class="pill-row" id="parse-history-detail-pills"></div>
+                      <ul class="parse-history-file-list" id="parse-history-file-list"></ul>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="card">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">解析日志</p>
+                      <p class="mono">记录排队、解析、失败重试和载入焊缝的过程</p>
+                    </div>
+                  </div>
+                  <div class="log-panel parse-log-panel" id="parse-log"></div>
+                </article>
+              </div>
+            </section>
             <section class="view" data-view-panel="seam">
               <article class="card">
                 <div class="toolbar">
@@ -917,5 +1287,25 @@
         <button type="button" class="primary small" id="column-filter-ok">OK</button>
       </div>
     </div>
+
+    <div id="parse-quick-modal" class="parse-quick-modal hidden" role="dialog" aria-modal="true" aria-labelledby="parse-quick-title">
+      <div class="parse-quick-backdrop" id="parse-quick-backdrop"></div>
+      <section class="parse-quick-dialog">
+        <div class="toolbar">
+          <div>
+            <p class="card-kicker">快速查看 / 修改</p>
+            <h3 id="parse-quick-title">焊缝信息</h3>
+            <p class="mono" id="parse-quick-meta">-</p>
+          </div>
+          <button type="button" class="ghost small" id="btn-parse-quick-close">关闭</button>
+        </div>
+        <div class="parse-quick-body" id="parse-quick-body"></div>
+        <div class="parse-quick-actions">
+          <button type="button" class="ghost small" id="btn-parse-quick-cancel">取消</button>
+          <button type="button" class="primary small" id="btn-parse-quick-save">保存</button>
+        </div>
+      </section>
+    </div>
   </body>
 </html>
+

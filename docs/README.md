@@ -19,16 +19,17 @@
 8. `phase0/08-License-Spec.md`
 9. `phase0/09-NFR.md`
 10. `phase0/10-Acceptance-v1.md`
-11. `planning/11-Implementation-Roadmap.md`
-12. `planning/12-UI-First-Schedule.md`
-13. `ui/13-UI-Page-Spec.md`
-14. `ui/14-UI-Navigation-Wireframe.md`
-15. `product/15-Requirement-Decision-Log.md`
-16. `engineering/16-Backend-Scaffold-v0.md`
-17. `engineering/17-SQLite-Store-v0.md`
-18. `engineering/18-Engine-CLI-v0.md`
-19. `engineering/19-App-Service-v0.md`
-20. `engineering/20-Tauri-Command-Scaffold-v0.md`
+11. `phase0/11-AI-Candidate-Detection-Spec.md`
+12. `planning/11-Implementation-Roadmap.md`
+13. `planning/12-UI-First-Schedule.md`
+14. `ui/13-UI-Page-Spec.md`
+15. `ui/14-UI-Navigation-Wireframe.md`
+16. `product/15-Requirement-Decision-Log.md`
+17. `engineering/16-Backend-Scaffold-v0.md`
+18. `engineering/17-SQLite-Store-v0.md`
+19. `engineering/18-Engine-CLI-v0.md`
+20. `engineering/19-App-Service-v0.md`
+21. `engineering/20-Tauri-Command-Scaffold-v0.md`
 
 ## 说明
 

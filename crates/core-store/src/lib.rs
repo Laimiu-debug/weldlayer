@@ -19,7 +19,10 @@ pub enum StoreError {
 pub struct ProjectRecord {
     pub project_id: String,
     pub project_name: String,
+    pub company_name: String,
+    pub drawing_type: String,
     pub standard_code: StandardCode,
+    pub archived_at: Option<i64>,
     pub updated_at: i64,
 }
 
@@ -124,20 +127,32 @@ impl Store {
         &self,
         project_id: &str,
         project_name: &str,
+        company_name: &str,
+        drawing_type: &str,
         standard_code: &StandardCode,
     ) -> Result<(), StoreError> {
         let updated_at = now_unix_ts();
         let standard_json = serde_json::to_string(standard_code)?;
         self.conn.execute(
             r#"
-            INSERT INTO projects (project_id, project_name, standard_code, updated_at)
-            VALUES (?1, ?2, ?3, ?4)
+            INSERT INTO projects (project_id, project_name, company_name, drawing_type, standard_code, archived_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)
             ON CONFLICT(project_id) DO UPDATE SET
               project_name = excluded.project_name,
+              company_name = excluded.company_name,
+              drawing_type = excluded.drawing_type,
               standard_code = excluded.standard_code,
+              archived_at = NULL,
               updated_at = excluded.updated_at
             "#,
-            params![project_id, project_name, standard_json, updated_at],
+            params![
+                project_id,
+                project_name,
+                company_name,
+                drawing_type,
+                standard_json,
+                updated_at
+            ],
         )?;
         Ok(())
     }
@@ -147,25 +162,88 @@ impl Store {
             .conn
             .query_row(
                 r#"
-                SELECT project_id, project_name, standard_code, updated_at
+                SELECT project_id, project_name, company_name, drawing_type, standard_code, archived_at, updated_at
                 FROM projects
                 WHERE project_id = ?1
                 "#,
                 params![project_id],
                 |row| {
-                    let standard_code_json: String = row.get(2)?;
+                    let standard_code_json: String = row.get(4)?;
                     let standard_code: StandardCode =
                         serde_json::from_str(&standard_code_json).map_err(map_json_err)?;
                     Ok(ProjectRecord {
                         project_id: row.get(0)?,
                         project_name: row.get(1)?,
+                        company_name: row.get(2)?,
+                        drawing_type: row.get(3)?,
                         standard_code,
-                        updated_at: row.get(3)?,
+                        archived_at: row.get(5)?,
+                        updated_at: row.get(6)?,
                     })
                 },
             )
             .optional()?;
         Ok(row)
+    }
+
+    pub fn list_projects(
+        &self,
+        limit: usize,
+        include_archived: bool,
+    ) -> Result<Vec<ProjectRecord>, StoreError> {
+        let sql = if include_archived {
+            r#"
+            SELECT project_id, project_name, company_name, drawing_type, standard_code, archived_at, updated_at
+            FROM projects
+            ORDER BY updated_at DESC
+            LIMIT ?1
+            "#
+        } else {
+            r#"
+            SELECT project_id, project_name, company_name, drawing_type, standard_code, archived_at, updated_at
+            FROM projects
+            WHERE archived_at IS NULL
+            ORDER BY updated_at DESC
+            LIMIT ?1
+            "#
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                let standard_code_json: String = row.get(4)?;
+                let standard_code: StandardCode =
+                    serde_json::from_str(&standard_code_json).map_err(map_json_err)?;
+                Ok(ProjectRecord {
+                    project_id: row.get(0)?,
+                    project_name: row.get(1)?,
+                    company_name: row.get(2)?,
+                    drawing_type: row.get(3)?,
+                    standard_code,
+                    archived_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn archive_project(
+        &self,
+        project_id: &str,
+        archived: bool,
+    ) -> Result<bool, StoreError> {
+        let updated_at = now_unix_ts();
+        let archived_at = if archived { Some(updated_at) } else { None };
+        let changed = self.conn.execute(
+            r#"
+            UPDATE projects
+            SET archived_at = ?2,
+                updated_at = ?3
+            WHERE project_id = ?1
+            "#,
+            params![project_id, archived_at, updated_at],
+        )?;
+        Ok(changed > 0)
     }
 
     pub fn insert_match_report(
@@ -227,18 +305,22 @@ impl Store {
         Ok(row)
     }
 
-    pub fn list_match_reports(&self, limit: usize) -> Result<Vec<MatchReportRecord>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            r#"
-            SELECT trace_id, project_id, decision, rule_package_version, request_json, response_json, created_at
-            FROM match_reports
-            ORDER BY created_at DESC
-            LIMIT ?1
-            "#,
-        )?;
-
-        let rows = stmt
-            .query_map(params![limit as i64], |row| {
+    pub fn list_match_reports(
+        &self,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MatchReportRecord>, StoreError> {
+        let rows = if let Some(project_id) = project_id {
+            let mut stmt = self.conn.prepare(
+                r#"
+                SELECT trace_id, project_id, decision, rule_package_version, request_json, response_json, created_at
+                FROM match_reports
+                WHERE project_id = ?1
+                ORDER BY created_at DESC
+                LIMIT ?2
+                "#,
+            )?;
+            stmt.query_map(params![project_id, limit as i64], |row| {
                 Ok(MatchReportRecord {
                     trace_id: row.get(0)?,
                     project_id: row.get(1)?,
@@ -249,7 +331,29 @@ impl Store {
                     created_at: row.get(6)?,
                 })
             })?
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+        } else {
+            let mut stmt = self.conn.prepare(
+                r#"
+                SELECT trace_id, project_id, decision, rule_package_version, request_json, response_json, created_at
+                FROM match_reports
+                ORDER BY created_at DESC
+                LIMIT ?1
+                "#,
+            )?;
+            stmt.query_map(params![limit as i64], |row| {
+                Ok(MatchReportRecord {
+                    trace_id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    decision: row.get(2)?,
+                    rule_package_version: row.get(3)?,
+                    request_json: row.get(4)?,
+                    response_json: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        };
 
         Ok(rows)
     }
@@ -344,18 +448,23 @@ impl Store {
         Ok(())
     }
 
-    pub fn list_audit_logs(&self, limit: usize) -> Result<Vec<AuditLogRecord>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            r#"
-            SELECT trace_id, action, result, payload_json, created_at
-            FROM audit_logs
-            ORDER BY created_at DESC
-            LIMIT ?1
-            "#,
-        )?;
-
-        let rows = stmt
-            .query_map(params![limit as i64], |row| {
+    pub fn list_audit_logs(
+        &self,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<AuditLogRecord>, StoreError> {
+        let rows = if let Some(project_id) = project_id {
+            let mut stmt = self.conn.prepare(
+                r#"
+                SELECT a.trace_id, a.action, a.result, a.payload_json, a.created_at
+                FROM audit_logs a
+                INNER JOIN match_reports m ON m.trace_id = a.trace_id
+                WHERE m.project_id = ?1
+                ORDER BY a.created_at DESC
+                LIMIT ?2
+                "#,
+            )?;
+            stmt.query_map(params![project_id, limit as i64], |row| {
                 Ok(AuditLogRecord {
                     trace_id: row.get(0)?,
                     action: row.get(1)?,
@@ -364,7 +473,27 @@ impl Store {
                     created_at: row.get(4)?,
                 })
             })?
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+        } else {
+            let mut stmt = self.conn.prepare(
+                r#"
+                SELECT trace_id, action, result, payload_json, created_at
+                FROM audit_logs
+                ORDER BY created_at DESC
+                LIMIT ?1
+                "#,
+            )?;
+            stmt.query_map(params![limit as i64], |row| {
+                Ok(AuditLogRecord {
+                    trace_id: row.get(0)?,
+                    action: row.get(1)?,
+                    result: row.get(2)?,
+                    payload_json: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+        };
 
         Ok(rows)
     }
@@ -956,9 +1085,14 @@ impl Store {
             CREATE TABLE IF NOT EXISTS projects (
               project_id TEXT PRIMARY KEY,
               project_name TEXT NOT NULL,
+              company_name TEXT NOT NULL DEFAULT '',
+              drawing_type TEXT NOT NULL DEFAULT '',
               standard_code TEXT NOT NULL,
+              archived_at INTEGER,
               updated_at INTEGER NOT NULL
             );
+
+            CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at DESC);
 
             CREATE TABLE IF NOT EXISTS match_reports (
               trace_id TEXT PRIMARY KEY,
@@ -1043,6 +1177,28 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_weld_seams_updated_at ON weld_seams(updated_at DESC);
             "#,
         )?;
+        self.ensure_column("projects", "company_name", "TEXT NOT NULL DEFAULT ''")?;
+        self.ensure_column("projects", "drawing_type", "TEXT NOT NULL DEFAULT ''")?;
+        self.ensure_column("projects", "archived_at", "INTEGER")?;
+        self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_projects_archived_at ON projects(archived_at);",
+        )?;
+        Ok(())
+    }
+}
+
+impl Store {
+    fn ensure_column(&self, table_name: &str, column_name: &str, spec: &str) -> Result<(), StoreError> {
+        let pragma = format!("PRAGMA table_info({table_name})");
+        let mut stmt = self.conn.prepare(&pragma)?;
+        let existing = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if existing.iter().any(|name| name == column_name) {
+            return Ok(());
+        }
+        let sql = format!("ALTER TABLE {table_name} ADD COLUMN {column_name} {spec}");
+        self.conn.execute_batch(&sql)?;
         Ok(())
     }
 }
@@ -1213,7 +1369,13 @@ mod tests {
     fn can_upsert_and_read_project() {
         let store = Store::open_in_memory().expect("open in-memory db");
         store
-            .upsert_project("PRJ-001", "Test Project", &StandardCode::AsmeIx)
+            .upsert_project(
+                "PRJ-001",
+                "Test Project",
+                "Laimiu",
+                "PDF+DWG",
+                &StandardCode::AsmeIx,
+            )
             .expect("upsert project");
 
         let got = store
@@ -1223,6 +1385,8 @@ mod tests {
 
         assert_eq!(got.project_id, "PRJ-001");
         assert_eq!(got.project_name, "Test Project");
+        assert_eq!(got.company_name, "Laimiu");
+        assert_eq!(got.drawing_type, "PDF+DWG");
         assert_eq!(got.standard_code, StandardCode::AsmeIx);
     }
 
@@ -1244,14 +1408,56 @@ mod tests {
             )
             .expect("insert audit log");
 
-        let reports = store.list_match_reports(10).expect("list reports");
-        let logs = store.list_audit_logs(10).expect("list logs");
+        let reports = store.list_match_reports(None, 10).expect("list reports");
+        let logs = store.list_audit_logs(None, 10).expect("list logs");
 
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].trace_id, "TRC-001");
         assert_eq!(reports[0].decision, "partial");
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].action, "run_match");
+    }
+
+    #[test]
+    fn can_list_and_archive_projects() {
+        let store = Store::open_in_memory().expect("open in-memory db");
+        store
+            .upsert_project(
+                "PRJ-001",
+                "Project A",
+                "Laimiu",
+                "PDF",
+                &StandardCode::AsmeIx,
+            )
+            .expect("upsert first project");
+        store
+            .upsert_project(
+                "PRJ-002",
+                "Project B",
+                "Laimiu",
+                "DWG",
+                &StandardCode::CnGb,
+            )
+            .expect("upsert second project");
+
+        let all_projects = store.list_projects(10, true).expect("list all projects");
+        assert_eq!(all_projects.len(), 2);
+
+        assert!(store
+            .archive_project("PRJ-001", true)
+            .expect("archive project should succeed"));
+
+        let active_projects = store
+            .list_projects(10, false)
+            .expect("list active projects");
+        assert_eq!(active_projects.len(), 1);
+        assert_eq!(active_projects[0].project_id, "PRJ-002");
+
+        let archived_project = store
+            .get_project("PRJ-001")
+            .expect("query archived project")
+            .expect("archived project exists");
+        assert!(archived_project.archived_at.is_some());
     }
 
     #[test]

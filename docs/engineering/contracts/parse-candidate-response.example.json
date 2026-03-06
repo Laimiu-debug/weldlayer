@@ -1,0 +1,114 @@
+{
+  "trace_id": "TRC-20260306-00031",
+  "status": "partial",
+  "mode": "candidate_detection",
+  "drawings": [
+    {
+      "draw_ref": "pressure_line_01.pdf",
+      "sheet_no": "P-101",
+      "explicit_weld_count": 2,
+      "candidate_weld_count": 4
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "WC-0001",
+      "draw_ref": "pressure_line_01.pdf",
+      "sheet_no": "P-101",
+      "page_index": 0,
+      "source_kind": "hybrid",
+      "anchor_bbox": {
+        "x": 1240,
+        "y": 860,
+        "w": 180,
+        "h": 96
+      },
+      "candidate_type": "branch_joint",
+      "joint_geometry": "pipe_branch",
+      "material_guess_a": "P-No.1",
+      "material_guess_b": "P-No.1",
+      "thickness_guess_a_mm": 12.0,
+      "thickness_guess_b_mm": 8.0,
+      "position_guess": "5G",
+      "weld_symbol_guess": "BW",
+      "confidence_score": 0.78,
+      "review_status": "uncertain",
+      "evidence": [
+        {
+          "type": "geometry_branch",
+          "score": 0.44,
+          "source_ref": "page:0:bbox:1240,860,180,96",
+          "summary": "检测到支管相贯连接"
+        },
+        {
+          "type": "thickness_label_nearby",
+          "score": 0.19,
+          "source_ref": "text:THK=8",
+          "summary": "邻近厚度标注 THK=8"
+        },
+        {
+          "type": "material_label_nearby",
+          "score": 0.15,
+          "source_ref": "text:A106B",
+          "summary": "邻近材料标注 A106B"
+        }
+      ]
+    },
+    {
+      "candidate_id": "WC-0002",
+      "draw_ref": "pressure_line_01.pdf",
+      "sheet_no": "P-101",
+      "page_index": 0,
+      "source_kind": "vector",
+      "anchor_bbox": {
+        "x": 1640,
+        "y": 430,
+        "w": 150,
+        "h": 70
+      },
+      "candidate_type": "butt_joint",
+      "joint_geometry": "pipe_butt",
+      "material_guess_a": "P-No.8",
+      "material_guess_b": "P-No.8",
+      "thickness_guess_a_mm": 10.0,
+      "thickness_guess_b_mm": 10.0,
+      "position_guess": "2G",
+      "weld_symbol_guess": "BW",
+      "confidence_score": 0.89,
+      "review_status": "pending",
+      "evidence": [
+        {
+          "type": "geometry_butt_joint",
+          "score": 0.46,
+          "source_ref": "page:0:bbox:1640,430,150,70",
+          "summary": "检测到同轴对接断点"
+        },
+        {
+          "type": "weld_symbol_detected",
+          "score": 0.28,
+          "source_ref": "symbol:BW",
+          "summary": "邻近识别到对接焊符号"
+        },
+        {
+          "type": "detail_view_linked",
+          "score": 0.11,
+          "source_ref": "detail:N-03",
+          "summary": "关联节点详图 N-03"
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": "OCR_REGION_LOW_QUALITY",
+      "message": "局部扫描质量较差，部分文字未能稳定识别",
+      "path": "pressure_line_01.pdf"
+    }
+  ],
+  "logs": [
+    {
+      "level": "info",
+      "message": "candidate detection completed"
+    }
+  ]
+}

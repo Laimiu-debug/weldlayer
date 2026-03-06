@@ -7,6 +7,21 @@ import sys
 from typing import Any, Dict, List
 
 
+def read_stdin_json_text() -> str:
+    raw_bytes = sys.stdin.buffer.read()
+    if not raw_bytes:
+        return ""
+    try:
+        return raw_bytes.decode("utf-8-sig").strip()
+    except UnicodeDecodeError:
+        return raw_bytes.decode(sys.getfilesystemencoding() or "utf-8", errors="replace").strip()
+
+
+def emit_json(payload: Dict[str, Any]) -> None:
+    sys.stdout.buffer.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    sys.stdout.buffer.write(b"\n")
+
+
 def probe_pdf_pages(path: str) -> int | None:
     try:
         from pypdf import PdfReader  # type: ignore
@@ -103,41 +118,35 @@ def parse_request(request: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def main() -> int:
-    raw = sys.stdin.read().lstrip("\ufeff").strip()
+    raw = read_stdin_json_text()
     if not raw:
-        print(
-            json.dumps(
-                {
-                    "trace_id": "TRC-EMPTY",
-                    "status": "failed",
-                    "seams": [],
-                    "errors": [{"code": "PARSE_EMPTY_INPUT", "message": "stdin is empty", "path": ""}],
-                    "logs": [{"level": "error", "message": "no input"}],
-                },
-                ensure_ascii=False,
-            )
+        emit_json(
+            {
+                "trace_id": "TRC-EMPTY",
+                "status": "failed",
+                "seams": [],
+                "errors": [{"code": "PARSE_EMPTY_INPUT", "message": "stdin is empty", "path": ""}],
+                "logs": [{"level": "error", "message": "no input"}],
+            }
         )
         return 1
 
     try:
         request = json.loads(raw)
     except json.JSONDecodeError as exc:
-        print(
-            json.dumps(
-                {
-                    "trace_id": "TRC-INVALID-JSON",
-                    "status": "failed",
-                    "seams": [],
-                    "errors": [{"code": "PARSE_BAD_JSON", "message": str(exc), "path": ""}],
-                    "logs": [{"level": "error", "message": "invalid json"}],
-                },
-                ensure_ascii=False,
-            )
+        emit_json(
+            {
+                "trace_id": "TRC-INVALID-JSON",
+                "status": "failed",
+                "seams": [],
+                "errors": [{"code": "PARSE_BAD_JSON", "message": str(exc), "path": ""}],
+                "logs": [{"level": "error", "message": "invalid json"}],
+            }
         )
         return 1
 
     response = parse_request(request)
-    print(json.dumps(response, ensure_ascii=False))
+    emit_json(response)
     return 0
 
 

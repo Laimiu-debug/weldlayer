@@ -1,6 +1,6 @@
 use contracts::matching::{
-    ConsumableBatch, MatchRequest, MatchResponse, PqrCandidate, ReviewStatus, WeldSeam,
-    WelderCandidate,
+    ConsumableBatch, MatchRequest, MatchResponse, PqrCandidate, ReviewStatus, StandardCode,
+    WeldSeam, WelderCandidate,
 };
 use contracts::parser::ParseRequest;
 use contracts::parser::ParseResponse;
@@ -67,7 +67,22 @@ pub fn run_match_and_persist_with_store(
 ) -> Result<MatchResponse, ServiceError> {
     let response = run_match(request)?;
     let audit_payload = build_match_audit_payload(project_name, request, &response)?;
-    store.upsert_project(&request.project_id, project_name, &request.standard_code)?;
+    let existing_project = store.get_project(&request.project_id)?;
+    let company_name = existing_project
+        .as_ref()
+        .map(|project| project.company_name.as_str())
+        .unwrap_or("");
+    let drawing_type = existing_project
+        .as_ref()
+        .map(|project| project.drawing_type.as_str())
+        .unwrap_or("");
+    store.upsert_project(
+        &request.project_id,
+        project_name,
+        company_name,
+        drawing_type,
+        &request.standard_code,
+    )?;
     store.insert_match_report(request, &response)?;
     store.insert_audit_log(
         &response.trace_id,
@@ -76,6 +91,51 @@ pub fn run_match_and_persist_with_store(
         &audit_payload,
     )?;
     Ok(response)
+}
+
+pub fn upsert_project(
+    db_path: &str,
+    project_id: &str,
+    project_name: &str,
+    company_name: &str,
+    drawing_type: &str,
+    standard_code: &StandardCode,
+) -> Result<(), ServiceError> {
+    let store = Store::open(db_path)?;
+    store.upsert_project(
+        project_id,
+        project_name,
+        company_name,
+        drawing_type,
+        standard_code,
+    )?;
+    Ok(())
+}
+
+pub fn get_project(
+    db_path: &str,
+    project_id: &str,
+) -> Result<Option<core_store::ProjectRecord>, ServiceError> {
+    let store = Store::open(db_path)?;
+    store.get_project(project_id).map_err(Into::into)
+}
+
+pub fn list_projects(
+    db_path: &str,
+    limit: usize,
+    include_archived: bool,
+) -> Result<Vec<core_store::ProjectRecord>, ServiceError> {
+    let store = Store::open(db_path)?;
+    store.list_projects(limit, include_archived).map_err(Into::into)
+}
+
+pub fn archive_project(
+    db_path: &str,
+    project_id: &str,
+    archived: bool,
+) -> Result<bool, ServiceError> {
+    let store = Store::open(db_path)?;
+    store.archive_project(project_id, archived).map_err(Into::into)
 }
 
 fn build_match_audit_payload(
@@ -347,18 +407,20 @@ pub fn delete_weld_seam(
 
 pub fn list_match_reports(
     db_path: &str,
+    project_id: Option<&str>,
     limit: usize,
 ) -> Result<Vec<core_store::MatchReportRecord>, ServiceError> {
     let store = Store::open(db_path)?;
-    store.list_match_reports(limit).map_err(Into::into)
+    store.list_match_reports(project_id, limit).map_err(Into::into)
 }
 
 pub fn list_audit_logs(
     db_path: &str,
+    project_id: Option<&str>,
     limit: usize,
 ) -> Result<Vec<core_store::AuditLogRecord>, ServiceError> {
     let store = Store::open(db_path)?;
-    store.list_audit_logs(limit).map_err(Into::into)
+    store.list_audit_logs(project_id, limit).map_err(Into::into)
 }
 
 pub fn freeze_match_baseline(
@@ -1124,8 +1186,8 @@ mod tests {
             .expect("query project")
             .expect("project should exist");
         assert_eq!(project.project_name, "Service Test");
-        assert_eq!(store.list_match_reports(10).expect("list reports").len(), 1);
-        let logs = store.list_audit_logs(10).expect("list logs");
+        assert_eq!(store.list_match_reports(None, 10).expect("list reports").len(), 1);
+        let logs = store.list_audit_logs(None, 10).expect("list logs");
         assert_eq!(logs.len(), 1);
 
         let payload: serde_json::Value = serde_json::from_str(&logs[0].payload_json)
@@ -1200,7 +1262,7 @@ mod tests {
                 .expect("match should hydrate master data");
 
         assert!(response.recommended.is_some());
-        assert_eq!(store.list_match_reports(10).expect("list reports").len(), 1);
+        assert_eq!(store.list_match_reports(None, 10).expect("list reports").len(), 1);
     }
 
     #[test]
@@ -1254,8 +1316,10 @@ mod tests {
         let response = run_match_and_persist(&db_path_str, "History Test", &request)
             .expect("match should persist report");
 
-        let reports = list_match_reports(&db_path_str, 10).expect("list match reports");
-        let logs = list_audit_logs(&db_path_str, 10).expect("list audit logs");
+        let reports =
+            list_match_reports(&db_path_str, Some(&request.project_id), 10).expect("list match reports");
+        let logs =
+            list_audit_logs(&db_path_str, Some(&request.project_id), 10).expect("list audit logs");
 
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].trace_id, response.trace_id);
