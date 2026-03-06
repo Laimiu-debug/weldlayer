@@ -34,7 +34,7 @@
           <button class="menu-item" data-view="seam">焊缝信息确认</button>
           <button class="menu-item" data-view="pqr">PQR管理</button>
           <button class="menu-item" data-view="welder">焊工资格管理</button>
-          <button class="menu-item" data-view="inventory">Inventory Batches</button>
+          <button class="menu-item" data-view="inventory">库存批次管理</button>
           <button class="menu-item" data-view="match">匹配与冲突解释</button>
           <button class="menu-item" data-view="template">模板映射</button>
           <button class="menu-item" data-view="export">工艺卡预览导出</button>
@@ -62,6 +62,19 @@
             <button class="primary">保存快照</button>
           </div>
         </header>
+
+        <section id="master-focus-banner" class="focus-banner hidden">
+          <div>
+            <p class="card-kicker">临时聚焦</p>
+            <p id="master-focus-text">当前未启用仅看对象</p>
+          </div>
+          <div class="button-row">
+            <span class="focus-banner-count" id="master-focus-count">1 / 1</span>
+            <button class="ghost small" id="btn-master-focus-prev">上一条</button>
+            <button class="ghost small" id="btn-master-focus-next">下一条</button>
+            <button class="ghost small" id="btn-clear-master-focus">恢复全量视图</button>
+          </div>
+        </section>
 
         <div class="content-shell">
           <main class="main-panel">
@@ -151,11 +164,16 @@
               <article class="card">
                 <div class="toolbar">
                   <div class="button-row">
-                    <button class="ghost" id="btn-add-seam">Add Seam</button>
+                    <button class="ghost" id="btn-add-seam">新增焊缝</button>
+                    <button class="ghost" id="btn-seam-template">下载CSV模板</button>
+                    <button class="ghost" id="btn-seam-import">导入CSV</button>
+                    <button class="primary" id="btn-seam-sync">同步到后端</button>
+                    <button class="ghost" id="btn-seam-load">从后端加载</button>
                     <button class="primary" id="btn-confirm-all">批量确认</button>
                     <button class="ghost" id="btn-mark-uncertain">标记低置信度</button>
                     <button class="ghost" id="btn-mark-special">标记特殊工况</button>
                   </div>
+                  <input id="seam-import-file" type="file" accept=".csv,text/csv" hidden />
                   <div class="legend">
                     <span class="tag ok">confirmed</span>
                     <span class="tag warn">pending</span>
@@ -200,11 +218,48 @@
                         <th>特殊工况</th>
                         <th>置信度</th>
                         <th>状态</th>
-                        <th>Action</th>
+                        <th>操作</th>
                       </tr>
                     </thead>
                     <tbody></tbody>
                   </table>
+                </div>
+
+                <div id="seam-import-preview" class="card hidden">
+                  <div class="toolbar">
+                    <p class="card-kicker">CSV导入预览</p>
+                    <div class="button-row">
+                      <button class="ghost" id="btn-seam-import-export-errors">导出错误行CSV</button>
+                      <button class="primary" id="btn-seam-import-apply">确认导入</button>
+                      <button class="ghost" id="btn-seam-import-cancel">取消</button>
+                    </div>
+                  </div>
+                  <p class="mono" id="seam-import-summary">预览数据将显示在这里</p>
+                  <label class="seam-import-option">
+                    <input id="seam-import-allow-partial" type="checkbox" />
+                    仅导入通过行（忽略失败行）
+                  </label>
+                  <div class="table-wrap">
+                    <table class="seam-import-preview-table">
+                      <thead>
+                        <tr>
+                          <th>行号</th>
+                          <th>焊缝ID</th>
+                          <th>母材A</th>
+                          <th>母材B</th>
+                          <th>厚度A(mm)</th>
+                          <th>厚度B(mm)</th>
+                          <th>位置</th>
+                          <th>符号</th>
+                          <th>置信度</th>
+                          <th>状态</th>
+                          <th>结果</th>
+                          <th>错误信息</th>
+                        </tr>
+                      </thead>
+                      <tbody id="seam-import-preview-body"></tbody>
+                    </table>
+                  </div>
                 </div>
               </article>
             </section>
@@ -470,25 +525,25 @@
             <section class="view" data-view-panel="inventory">
               <article class="card">
                 <div class="toolbar">
-                  <p class="card-kicker">Consumable Batch Master Data</p>
+                  <p class="card-kicker">库存批次主数据</p>
                   <div class="button-row">
-                    <button class="ghost" id="btn-batch-add">Add Batch</button>
-                    <button class="primary" id="btn-batch-sync">Sync to Backend</button>
-                    <button class="ghost" id="btn-batch-load">Load from Backend</button>
+                    <button class="ghost" id="btn-batch-add">新增批次</button>
+                    <button class="primary" id="btn-batch-sync">同步到后端</button>
+                    <button class="ghost" id="btn-batch-load">从后端加载</button>
                   </div>
                 </div>
                 <div class="table-wrap">
                   <table>
                     <thead>
                       <tr>
-                        <th>Batch No</th>
-                        <th>Material Code</th>
-                        <th>Spec Standard</th>
-                        <th>Available Qty</th>
-                        <th>Safety Stock</th>
-                        <th>Expiry Date</th>
-                        <th>Status</th>
-                        <th>Action</th>
+                        <th>批次号</th>
+                        <th>焊材编码</th>
+                        <th>规格标准</th>
+                        <th>可用数量</th>
+                        <th>安全库存</th>
+                        <th>到期日期</th>
+                        <th>状态</th>
+                        <th>操作</th>
                       </tr>
                     </thead>
                     <tbody id="batch-body"></tbody>
@@ -519,7 +574,7 @@
 
               <article class="card">
                 <div class="toolbar">
-                  <p class="card-kicker">Inventory Alerts</p>
+                  <p class="card-kicker">库存告警</p>
                 </div>
                 <ul class="queue-list compact" id="inventory-alert-list"></ul>
               </article>
@@ -547,6 +602,193 @@
                     </thead>
                     <tbody id="conflict-body"></tbody>
                   </table>
+                </div>
+              </article>
+
+              <div class="grid two">
+                <article class="card">
+                  <div class="toolbar">
+                    <p class="card-kicker">最近匹配记录</p>
+                    <button class="ghost" id="btn-refresh-history">刷新记录</button>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>时间</th>
+                          <th>决策</th>
+                          <th>Trace ID</th>
+                          <th>规则版本</th>
+                        </tr>
+                      </thead>
+                      <tbody id="match-report-body"></tbody>
+                    </table>
+                  </div>
+                </article>
+
+                <article class="card">
+                  <div class="toolbar">
+                    <p class="card-kicker">审计日志</p>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>时间</th>
+                          <th>动作</th>
+                          <th>结果</th>
+                          <th>Trace ID</th>
+                        </tr>
+                      </thead>
+                      <tbody id="audit-log-body"></tbody>
+                    </table>
+                  </div>
+                </article>
+              </div>
+
+              <article class="card">
+                <div class="toolbar">
+                  <div>
+                    <p class="card-kicker">匹配审计详情</p>
+                    <p class="mono" id="match-detail-trace">请选择一条匹配记录</p>
+                  </div>
+                  <div class="button-row">
+                    <button class="primary" id="btn-freeze-baseline">冻结为基线</button>
+                    <button class="ghost" id="btn-export-audit-package">导出审计包</button>
+                  </div>
+                </div>
+                <p id="match-detail-empty">选择一条匹配记录后，可查看当次输入快照、输出结果和关联审计日志。</p>
+                <div id="match-detail-content" class="match-detail hidden">
+                  <div class="match-detail-grid">
+                    <article class="match-detail-stat">
+                      <span>项目</span>
+                      <strong id="match-detail-project">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>标准</span>
+                      <strong id="match-detail-standard">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>决策</span>
+                      <strong id="match-detail-decision">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>规则版本</span>
+                      <strong id="match-detail-rule-package">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>输入规模</span>
+                      <strong id="match-detail-input-counts">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>复核状态</span>
+                      <strong id="match-detail-review-counts">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>推荐组合</span>
+                      <strong id="match-detail-recommendation">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>结果摘要</span>
+                      <strong id="match-detail-results">-</strong>
+                    </article>
+                  </div>
+
+                  <div class="grid two match-detail-panels">
+                    <article class="match-detail-panel">
+                      <p class="card-kicker">输入快照</p>
+                      <pre id="match-detail-request-json" class="json-panel"></pre>
+                    </article>
+                    <article class="match-detail-panel">
+                      <p class="card-kicker">输出快照</p>
+                      <pre id="match-detail-response-json" class="json-panel"></pre>
+                    </article>
+                  </div>
+
+                  <article class="match-detail-panel">
+                    <p class="card-kicker">关联审计日志</p>
+                    <ul id="match-detail-audit-list" class="queue-list compact"></ul>
+                  </article>
+                </div>
+              </article>
+
+              <article class="card">
+                <div class="toolbar">
+                  <p class="card-kicker">项目基线</p>
+                  <button class="ghost" id="btn-refresh-baselines">刷新基线</button>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>冻结时间</th>
+                        <th>基线标签</th>
+                        <th>决策</th>
+                        <th>复核状态</th>
+                        <th>Trace ID</th>
+                        <th>规则版本</th>
+                      </tr>
+                    </thead>
+                    <tbody id="match-baseline-body"></tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article class="card">
+                <div class="toolbar">
+                  <div>
+                    <p class="card-kicker">基线对比</p>
+                    <p class="mono" id="baseline-compare-caption">当前未生成对比结果</p>
+                  </div>
+                  <div class="button-row">
+                    <button class="primary" id="btn-rematch-freeze-baseline">重新匹配并冻结新基线</button>
+                  </div>
+                </div>
+                <p id="baseline-compare-empty">选中匹配记录后，系统会自动与最近冻结基线做差异对比。</p>
+                <div id="baseline-compare-content" class="baseline-compare hidden">
+                  <div class="baseline-compare-grid">
+                    <article class="match-detail-stat">
+                      <span>决策变化</span>
+                      <strong id="baseline-compare-decision">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>推荐组合</span>
+                      <strong id="baseline-compare-recommendation">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>输入规模</span>
+                      <strong id="baseline-compare-inputs">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>结果摘要</span>
+                      <strong id="baseline-compare-results">-</strong>
+                    </article>
+                  </div>
+                  <article class="match-detail-panel">
+                    <p class="card-kicker">差异明细</p>
+                    <ul id="baseline-compare-list" class="queue-list compact"></ul>
+                  </article>
+                </div>
+              </article>
+
+              <article class="card">
+                <div class="toolbar">
+                  <div>
+                    <p class="card-kicker">影响范围明细</p>
+                    <p class="mono" id="baseline-impact-caption">当前未选择需要分析的基线</p>
+                  </div>
+                  <div class="button-row">
+                    <button class="ghost" id="btn-export-review-checklist">导出复核清单</button>
+                    <button class="ghost" id="btn-refresh-baseline-impact">刷新明细</button>
+                  </div>
+                </div>
+                <p id="baseline-impact-empty">选中匹配记录后，系统会显示对应基线在冻结后的主数据变更明细。</p>
+                <div id="baseline-impact-content" class="baseline-impact hidden">
+                  <article class="match-detail-panel">
+                    <p class="card-kicker">复核摘要</p>
+                    <div id="baseline-impact-summary" class="baseline-impact-summary"></div>
+                  </article>
+                  <div id="baseline-impact-groups" class="baseline-impact-groups"></div>
                 </div>
               </article>
             </section>
