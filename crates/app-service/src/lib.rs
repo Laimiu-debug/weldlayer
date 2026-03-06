@@ -31,6 +31,7 @@ pub enum ServiceError {
 pub struct SidecarConfig {
     pub interpreter: String,
     pub script_path: String,
+    pub envs: Vec<(String, String)>,
 }
 
 impl Default for SidecarConfig {
@@ -38,6 +39,7 @@ impl Default for SidecarConfig {
         Self {
             interpreter: "python".to_string(),
             script_path: "sidecar/parser-python/parser_sidecar.py".to_string(),
+            envs: Vec::new(),
         }
     }
 }
@@ -210,12 +212,16 @@ pub fn run_parse_via_sidecar(
 ) -> Result<ParseResponse, ServiceError> {
     let input_json = serde_json::to_vec(request)?;
 
-    let mut child = Command::new(&config.interpreter)
+    let mut command = Command::new(&config.interpreter);
+    command
         .arg(&config.script_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    if !config.envs.is_empty() {
+        command.envs(config.envs.iter().map(|(key, value)| (key, value)));
+    }
+    let mut child = command.spawn()?;
 
     if let Some(stdin) = child.stdin.as_mut() {
         stdin.write_all(&input_json)?;
@@ -1129,6 +1135,11 @@ mod tests {
                 position_code: "2G".to_string(),
                 process_hint: "GTAW".to_string(),
                 review_status: ReviewStatus::Confirmed,
+                weld_symbol: None,
+                confidence_score: None,
+                source_kind: None,
+                source_draw_ref: None,
+                source_candidate_id: None,
             }],
             pqr_candidates: vec![PqrCandidate {
                 pqr_id: "PQR-001".to_string(),
@@ -1283,6 +1294,11 @@ mod tests {
             position_code: "5G".to_string(),
             process_hint: "GTAW".to_string(),
             review_status: ReviewStatus::Confirmed,
+            weld_symbol: None,
+            confidence_score: None,
+            source_kind: None,
+            source_draw_ref: None,
+            source_candidate_id: None,
         };
 
         upsert_weld_seam(&db_path_str, "PRJ-SVC-SEAM-001", &seam).expect("upsert seam");
@@ -1462,6 +1478,11 @@ mod tests {
             position_code: "5G".to_string(),
             process_hint: "GTAW".to_string(),
             review_status: ReviewStatus::Changed,
+            weld_symbol: None,
+            confidence_score: None,
+            source_kind: None,
+            source_draw_ref: None,
+            source_candidate_id: None,
         };
         let batch = ConsumableBatch {
             batch_no: "B-IMPACT-001".to_string(),

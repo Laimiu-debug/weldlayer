@@ -38,6 +38,7 @@
           <button class="menu-item" data-view="match">匹配与冲突解释</button>
           <button class="menu-item" data-view="template">模板映射</button>
           <button class="menu-item" data-view="export">工艺卡预览导出</button>
+          <button class="menu-item" data-view="settings">AI与适配配置</button>
           <button class="menu-item" data-view="license">许可证中心</button>
         </nav>
 
@@ -330,6 +331,7 @@
                               <th>图纸引用</th>
                               <th>候选类型</th>
                               <th>字段猜测</th>
+                              <th>命中说明</th>
                               <th>置信度</th>
                               <th>复核</th>
                             </tr>
@@ -379,6 +381,7 @@
                         </div>
                       </div>
                       <div class="parse-preview-actionbar">
+                        <button class="ghost small" id="btn-parse-quick-open">快速编辑当前标注</button>
                         <button class="ghost small" id="btn-parse-add-seam">新增焊缝</button>
                         <button class="ghost small" id="btn-parse-delete-seam">删除手动焊缝</button>
                         <button class="ghost small" id="btn-parse-accept-selected">接受当前图纸</button>
@@ -445,6 +448,11 @@
                       </article>
                     </div>
 
+                    <article class="parse-file-context card-lite">
+                      <p class="card-kicker">解析上下文</p>
+                      <div id="parse-file-context-summary" class="parse-file-context-summary"></div>
+                    </article>
+
                     <div class="table-wrap">
                       <table>
                         <thead>
@@ -463,15 +471,16 @@
                     </div>
 
                     <div class="table-wrap">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>候选ID</th>
-                            <th>接头类型</th>
-                            <th>字段猜测</th>
-                            <th>置信度</th>
-                            <th>复核</th>
-                            <th>操作</th>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>候选ID</th>
+                              <th>接头类型</th>
+                              <th>字段猜测</th>
+                              <th>命中说明</th>
+                              <th>置信度</th>
+                              <th>复核</th>
+                              <th>操作</th>
                           </tr>
                         </thead>
                         <tbody id="parse-file-candidate-body"></tbody>
@@ -539,6 +548,7 @@
                     <button class="ghost" id="btn-seam-import">导入CSV</button>
                     <button class="primary" id="btn-seam-sync">同步到后端</button>
                     <button class="ghost" id="btn-seam-load">从后端加载</button>
+                    <button class="ghost" id="btn-seam-open-source">回图纸定位</button>
                     <button class="primary" id="btn-confirm-all">批量确认</button>
                     <button class="ghost" id="btn-mark-uncertain">标记低置信度</button>
                     <button class="ghost" id="btn-mark-special">标记特殊工况</button>
@@ -588,6 +598,9 @@
                         <th>特殊工况</th>
                         <th>置信度</th>
                         <th>状态</th>
+                        <th>来源</th>
+                        <th>图纸</th>
+                        <th>候选ID</th>
                         <th>操作</th>
                       </tr>
                     </thead>
@@ -1229,6 +1242,185 @@
               </div>
             </section>
 
+            <section class="view" data-view-panel="settings">
+              <div class="grid two settings-grid">
+                <article class="card">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">配置文件</p>
+                      <p class="mono" id="ai-config-path">尚未加载本地 AI 配置</p>
+                    </div>
+                    <div class="button-row">
+                      <button class="ghost" id="btn-ai-config-reload">重新加载</button>
+                      <button class="ghost" id="btn-ai-config-reset">恢复默认</button>
+                      <button class="primary" id="btn-ai-config-save">保存配置</button>
+                    </div>
+                  </div>
+                  <p class="mono" id="ai-config-feedback">当前为离线优先配置。</p>
+                  <div class="settings-summary-grid">
+                    <article class="match-detail-stat">
+                      <span>OCR Provider</span>
+                      <strong id="ai-summary-ocr">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>布局 Provider</span>
+                      <strong id="ai-summary-layout">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>推理 Provider</span>
+                      <strong id="ai-summary-reasoning">-</strong>
+                    </article>
+                    <article class="match-detail-stat">
+                      <span>适配 Profile</span>
+                      <strong id="ai-summary-profile">-</strong>
+                    </article>
+                  </div>
+                </article>
+
+                <article class="card">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">Provider 选择</p>
+                      <p class="mono">本地优先，不把云端推理设成必需条件。</p>
+                    </div>
+                  </div>
+                  <form class="form-grid compact" id="ai-provider-form">
+                    <label>
+                      OCR
+                      <select id="ai-provider-ocr">
+                        <option value="rapidocr_local">RapidOCR (本地)</option>
+                        <option value="tesseract_local">Tesseract (本地)</option>
+                        <option value="disabled">关闭</option>
+                      </select>
+                    </label>
+                    <label>
+                      布局识别
+                      <select id="ai-provider-layout">
+                        <option value="onnx_local">ONNX (本地)</option>
+                        <option value="disabled">关闭</option>
+                      </select>
+                    </label>
+                    <label>
+                      关系推理
+                      <select id="ai-provider-reasoning">
+                        <option value="disabled">关闭</option>
+                        <option value="ollama_local">Ollama (本地)</option>
+                        <option value="openai_compatible">OpenAI 兼容接口</option>
+                      </select>
+                    </label>
+                  </form>
+                </article>
+              </div>
+
+              <div class="grid two settings-grid">
+                <article class="card">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">模型与运行参数</p>
+                      <p class="mono">路径字段支持本地绝对路径，也允许保留环境变量占位。</p>
+                    </div>
+                  </div>
+                  <form class="form-grid compact" id="ai-runtime-form">
+                    <label>OCR 模型目录<input id="ai-model-ocr-dir" /></label>
+                    <label>布局模型路径<input id="ai-model-layout" /></label>
+                    <label>推理模型 / 名称<input id="ai-model-reasoning" /></label>
+                    <label>推理服务地址<input id="ai-model-endpoint" /></label>
+                    <label>
+                      运行设备
+                      <select id="ai-runtime-device">
+                        <option value="cpu">CPU</option>
+                        <option value="gpu">GPU</option>
+                        <option value="auto">Auto</option>
+                      </select>
+                    </label>
+                    <label>线程数<input id="ai-runtime-threads" type="number" min="1" max="64" step="1" /></label>
+                    <label>OCR 语言（逗号分隔）<input id="ai-runtime-languages" /></label>
+                    <label>候选阈值<input id="ai-runtime-candidate-threshold" type="number" min="0" max="1" step="0.01" /></label>
+                    <label>关联阈值<input id="ai-runtime-association-threshold" type="number" min="0" max="1" step="0.01" /></label>
+                    <label class="toggle-field">
+                      <span>离线模式</span>
+                      <input id="ai-runtime-offline" type="checkbox" />
+                    </label>
+                    <label class="toggle-field">
+                      <span>启用 OCR</span>
+                      <input id="ai-feature-ocr" type="checkbox" />
+                    </label>
+                    <label class="toggle-field">
+                      <span>启用布局识别</span>
+                      <input id="ai-feature-layout" type="checkbox" />
+                    </label>
+                    <label class="toggle-field">
+                      <span>启用表格抽取</span>
+                      <input id="ai-feature-table" type="checkbox" />
+                    </label>
+                    <label class="toggle-field">
+                      <span>启用 LLM 推理</span>
+                      <input id="ai-feature-llm" type="checkbox" />
+                    </label>
+                    <label class="toggle-field">
+                      <span>允许云端 API</span>
+                      <input id="ai-feature-cloud" type="checkbox" />
+                    </label>
+                  </form>
+                </article>
+
+                <article class="card">
+                  <div class="toolbar">
+                    <div>
+                      <p class="card-kicker">客户图纸适配</p>
+                      <p class="mono">这里不是固定模板，而是语义别名和区域偏好。</p>
+                    </div>
+                  </div>
+                  <form class="form-grid compact" id="ai-profile-form">
+                    <label>Profile 名称<input id="ai-profile-name" /></label>
+                    <label>客户 / 设计院<input id="ai-profile-customer" /></label>
+                    <label>图纸类型（逗号分隔）<input id="ai-profile-drawing-kinds" /></label>
+                    <label>件号前缀（逗号分隔）<input id="ai-profile-part-prefixes" /></label>
+                    <label class="span-2">材料字段别名<textarea id="ai-alias-material" rows="3"></textarea></label>
+                    <label class="span-2">厚度字段别名<textarea id="ai-alias-thickness" rows="3"></textarea></label>
+                    <label class="span-2">件号字段别名<textarea id="ai-alias-part-no" rows="3"></textarea></label>
+                    <label class="span-2">接口号字段别名<textarea id="ai-alias-interface-no" rows="3"></textarea></label>
+                    <label class="span-2">焊接方法字段别名<textarea id="ai-alias-weld-method" rows="3"></textarea></label>
+                    <label class="span-2">焊材字段别名<textarea id="ai-alias-filler" rows="3"></textarea></label>
+                    <label>
+                      标题栏偏好
+                      <select id="ai-layout-title-block">
+                        <option value="bottom_right">右下</option>
+                        <option value="bottom_left">左下</option>
+                        <option value="top_right">右上</option>
+                        <option value="top_left">左上</option>
+                      </select>
+                    </label>
+                    <label>
+                      BOM 偏好
+                      <select id="ai-layout-bom-region">
+                        <option value="bottom_left">左下</option>
+                        <option value="bottom_right">右下</option>
+                        <option value="right_middle">右侧中部</option>
+                        <option value="left_middle">左侧中部</option>
+                      </select>
+                    </label>
+                    <label>
+                      接口表偏好
+                      <select id="ai-layout-interface-region">
+                        <option value="right_middle">右侧中部</option>
+                        <option value="bottom_right">右下</option>
+                        <option value="left_middle">左侧中部</option>
+                      </select>
+                    </label>
+                    <label>
+                      技术要求偏好
+                      <select id="ai-layout-requirement-region">
+                        <option value="right_bottom">右下</option>
+                        <option value="right_middle">右侧中部</option>
+                        <option value="bottom_left">左下</option>
+                      </select>
+                    </label>
+                  </form>
+                </article>
+              </div>
+            </section>
+
             <section class="view" data-view-panel="license">
               <div class="grid two">
                 <article class="card">
@@ -1297,11 +1489,16 @@
             <h3 id="parse-quick-title">焊缝信息</h3>
             <p class="mono" id="parse-quick-meta">-</p>
           </div>
-          <button type="button" class="ghost small" id="btn-parse-quick-close">关闭</button>
+          <div class="button-row">
+            <button type="button" class="ghost small" id="btn-parse-quick-prev">上一条</button>
+            <button type="button" class="ghost small" id="btn-parse-quick-next">下一条</button>
+            <button type="button" class="ghost small" id="btn-parse-quick-close">关闭</button>
+          </div>
         </div>
         <div class="parse-quick-body" id="parse-quick-body"></div>
         <div class="parse-quick-actions">
           <button type="button" class="ghost small" id="btn-parse-quick-cancel">取消</button>
+          <button type="button" class="ghost small" id="btn-parse-quick-save-open">保存并进入焊缝确认</button>
           <button type="button" class="primary small" id="btn-parse-quick-save">保存</button>
         </div>
       </section>

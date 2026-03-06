@@ -1256,6 +1256,11 @@ mod tests {
                 position_code: "2G".to_string(),
                 process_hint: "GTAW".to_string(),
                 review_status: ReviewStatus::Confirmed,
+                weld_symbol: None,
+                confidence_score: None,
+                source_kind: None,
+                source_draw_ref: None,
+                source_candidate_id: None,
             }],
             pqr_candidates: vec![PqrCandidate {
                 pqr_id: "PQR-001".to_string(),
@@ -1362,6 +1367,11 @@ mod tests {
             position_code: "5G".to_string(),
             process_hint: "GTAW".to_string(),
             review_status: ReviewStatus::Confirmed,
+            weld_symbol: None,
+            confidence_score: None,
+            source_kind: None,
+            source_draw_ref: None,
+            source_candidate_id: None,
         }
     }
 

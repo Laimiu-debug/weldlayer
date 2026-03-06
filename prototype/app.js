@@ -39,6 +39,54 @@ const DEFAULT_PARSE_OPTIONS = {
   detectSections: true,
   language: "zh-CN"
 };
+const DEFAULT_AI_CONFIG = {
+  providers: {
+    ocr: "rapidocr_local",
+    layout: "onnx_local",
+    reasoning: "disabled"
+  },
+  models: {
+    ocr_dir: "%APPDATA%\\WeldLayer\\models\\ocr",
+    layout_model: "%APPDATA%\\WeldLayer\\models\\layout\\layout.onnx",
+    reasoning_model: "qwen2.5:7b",
+    reasoning_endpoint: "http://127.0.0.1:11434"
+  },
+  runtime: {
+    device: "cpu",
+    threads: 6,
+    offline_mode: true,
+    ocr_languages: ["zh", "en"],
+    candidate_confidence_threshold: 0.55,
+    association_confidence_threshold: 0.7
+  },
+  features: {
+    enable_ocr: true,
+    enable_layout_detection: true,
+    enable_table_extraction: true,
+    enable_llm_reasoning: false,
+    enable_cloud_api: false
+  },
+  profile: {
+    name: "pressure_vessel_default",
+    customer_name: "default",
+    drawing_kinds: ["容器图", "管口方位图", "装配图"],
+    part_number_prefixes: ["A", "B", "DN"],
+    field_alias: {
+      material: { names: ["材料", "材质", "母材"] },
+      thickness: { names: ["厚度", "δ", "t"] },
+      part_no: { names: ["件号", "位号", "编号"] },
+      interface_no: { names: ["接口号", "接口", "接管号"] },
+      weld_method: { names: ["焊接方法", "焊接规程", "WPS"] },
+      filler: { names: ["焊接材料", "焊材", "焊丝"] }
+    },
+    layout_hint: {
+      prefer_title_block: "bottom_right",
+      prefer_bom_region: "bottom_left",
+      prefer_interface_region: "right_middle",
+      prefer_requirement_region: "right_bottom"
+    }
+  }
+};
 const SAMPLE_PARSE_FILES = [
   { path: "pressure_line_01.pdf", fileType: "pdf", source: "sample" },
   { path: "vessel_joint_revB.dwg", fileType: "dwg", source: "sample" },
@@ -178,6 +226,7 @@ const appState = {
   parseSelectedQueueId: "",
   parseSelectedSeamId: "",
   parseSelectedCandidateId: "",
+  selectedReviewSeamId: "",
   parseBusy: false,
   parseProgress: 0,
   parsePreviewMode: "browse",
@@ -188,8 +237,12 @@ const appState = {
   parsePreviewPageCount: 0,
   parsePreviewDrag: null,
   parsePreviewSuppressClickUntil: 0,
+  parsePreviewHotspotClick: null,
   parsePreviewAddSeamMode: false,
   parseShortcutPanelVisible: false,
+  aiConfig: JSON.parse(JSON.stringify(DEFAULT_AI_CONFIG)),
+  aiConfigPath: "",
+  aiConfigDirty: false,
   templateVersion: [1, 0, 0],
   traceId: "TRC-20260304-00017",
   licenseStatus: "NotActivated",
@@ -271,6 +324,12 @@ const viewMeta = {
     detailTitle: "导出检查",
     detailText: "导出前完成完整性检查。"
   },
+  settings: {
+    title: "本地 AI 与图纸适配配置",
+    breadcrumb: "系统中心 / AI 与适配配置",
+    detailTitle: "配置中心",
+    detailText: "管理本地 OCR、布局识别、关系推理与客户图纸适配 profile。"
+  },
   license: {
     title: "许可证中心",
     breadcrumb: "系统中心 / 许可证",
@@ -301,6 +360,15 @@ const projectRefreshBtn = document.querySelector("#btn-project-refresh");
 const projectResetBtn = document.querySelector("#btn-project-reset");
 const projectOpenImportBtn = document.querySelector("#btn-project-open-import");
 const projectArchiveCurrentBtn = document.querySelector("#btn-project-archive-current");
+const aiConfigPathLabel = document.querySelector("#ai-config-path");
+const aiConfigFeedback = document.querySelector("#ai-config-feedback");
+const aiSummaryOcr = document.querySelector("#ai-summary-ocr");
+const aiSummaryLayout = document.querySelector("#ai-summary-layout");
+const aiSummaryReasoning = document.querySelector("#ai-summary-reasoning");
+const aiSummaryProfile = document.querySelector("#ai-summary-profile");
+const aiConfigReloadBtn = document.querySelector("#btn-ai-config-reload");
+const aiConfigResetBtn = document.querySelector("#btn-ai-config-reset");
+const aiConfigSaveBtn = document.querySelector("#btn-ai-config-save");
 const parseDropzone = document.querySelector("#parse-dropzone");
 const parseFileInput = document.querySelector("#parse-file-input");
 const parsePickFilesBtn = document.querySelector("#btn-pick-parse-files");
@@ -344,6 +412,7 @@ const parseFlagSeamBtn = document.querySelector("#btn-parse-flag-seam");
 const parseUnflagSeamBtn = document.querySelector("#btn-parse-unflag-seam");
 const parseLoadAcceptedBtn = document.querySelector("#btn-parse-load-accepted");
 const parseLoadSelectedBtn = document.querySelector("#btn-parse-load-selected");
+const parseQuickOpenBtn = document.querySelector("#btn-parse-quick-open");
 const parsePreviewCanvas = document.querySelector("#parse-preview-canvas");
 const parsePreviewScroll = document.querySelector("#parse-preview-scroll");
 const parsePreviewDocument = document.querySelector("#parse-preview-document");
@@ -366,6 +435,7 @@ const parseFileSeamCount = document.querySelector("#parse-file-seam-count");
 const parseFileErrorCount = document.querySelector("#parse-file-error-count");
 const parseFileCandidateCount = document.querySelector("#parse-file-candidate-count");
 const parseFileSource = document.querySelector("#parse-file-source");
+const parseFileContextSummary = document.querySelector("#parse-file-context-summary");
 const parseFileSeamBody = document.querySelector("#parse-file-seam-body");
 const parseFileCandidateBody = document.querySelector("#parse-file-candidate-body");
 const parseFileErrorList = document.querySelector("#parse-file-error-list");
@@ -383,10 +453,14 @@ const parseQuickBackdrop = document.querySelector("#parse-quick-backdrop");
 const parseQuickTitle = document.querySelector("#parse-quick-title");
 const parseQuickMeta = document.querySelector("#parse-quick-meta");
 const parseQuickBody = document.querySelector("#parse-quick-body");
+const parseQuickPrevBtn = document.querySelector("#btn-parse-quick-prev");
+const parseQuickNextBtn = document.querySelector("#btn-parse-quick-next");
 const parseQuickCloseBtn = document.querySelector("#btn-parse-quick-close");
 const parseQuickCancelBtn = document.querySelector("#btn-parse-quick-cancel");
+const parseQuickSaveOpenBtn = document.querySelector("#btn-parse-quick-save-open");
 const parseQuickSaveBtn = document.querySelector("#btn-parse-quick-save");
 const seamBody = document.querySelector("#seam-table tbody");
+const seamOpenSourceBtn = document.querySelector("#btn-seam-open-source");
 const seamImportInput = document.querySelector("#seam-import-file");
 const seamImportPreview = document.querySelector("#seam-import-preview");
 const seamImportSummary = document.querySelector("#seam-import-summary");
@@ -460,6 +534,327 @@ const uiState = {
   parseQuickEdit: null
 };
 
+function cloneAiConfigValue(value = DEFAULT_AI_CONFIG) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeDelimitedValues(value, fallback = []) {
+  const source = Array.isArray(value) ? value : String(value || "").split(/[\n,;]+/);
+  const seen = new Set();
+  const rows = [];
+  source.forEach((entry) => {
+    const text = String(entry || "").trim();
+    if (!text) return;
+    const key = text.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push(text);
+  });
+  if (rows.length) return rows;
+  return Array.isArray(fallback) ? [...fallback] : [];
+}
+
+function clamp01(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(1, Math.max(0, numeric));
+}
+
+function normalizeAiFieldAlias(value, fallback = []) {
+  return {
+    names: normalizeDelimitedValues(value?.names ?? value, fallback)
+  };
+}
+
+function normalizeAiConfig(input = {}) {
+  const defaults = DEFAULT_AI_CONFIG;
+  const profile = input?.profile || {};
+  const fieldAlias = profile?.field_alias || {};
+  const layoutHint = profile?.layout_hint || {};
+  return {
+    providers: {
+      ocr: String(input?.providers?.ocr || defaults.providers.ocr).trim() || defaults.providers.ocr,
+      layout: String(input?.providers?.layout || defaults.providers.layout).trim() || defaults.providers.layout,
+      reasoning:
+        String(input?.providers?.reasoning || defaults.providers.reasoning).trim() || defaults.providers.reasoning
+    },
+    models: {
+      ocr_dir: String(input?.models?.ocr_dir || defaults.models.ocr_dir).trim() || defaults.models.ocr_dir,
+      layout_model:
+        String(input?.models?.layout_model || defaults.models.layout_model).trim() || defaults.models.layout_model,
+      reasoning_model:
+        String(input?.models?.reasoning_model || defaults.models.reasoning_model).trim() ||
+        defaults.models.reasoning_model,
+      reasoning_endpoint:
+        String(input?.models?.reasoning_endpoint || defaults.models.reasoning_endpoint).trim() ||
+        defaults.models.reasoning_endpoint
+    },
+    runtime: {
+      device: String(input?.runtime?.device || defaults.runtime.device).trim() || defaults.runtime.device,
+      threads: Math.min(64, Math.max(1, Number(input?.runtime?.threads || defaults.runtime.threads) || defaults.runtime.threads)),
+      offline_mode: input?.runtime?.offline_mode ?? defaults.runtime.offline_mode,
+      ocr_languages: normalizeDelimitedValues(input?.runtime?.ocr_languages, defaults.runtime.ocr_languages),
+      candidate_confidence_threshold: clamp01(
+        input?.runtime?.candidate_confidence_threshold,
+        defaults.runtime.candidate_confidence_threshold
+      ),
+      association_confidence_threshold: clamp01(
+        input?.runtime?.association_confidence_threshold,
+        defaults.runtime.association_confidence_threshold
+      )
+    },
+    features: {
+      enable_ocr: input?.features?.enable_ocr ?? defaults.features.enable_ocr,
+      enable_layout_detection:
+        input?.features?.enable_layout_detection ?? defaults.features.enable_layout_detection,
+      enable_table_extraction:
+        input?.features?.enable_table_extraction ?? defaults.features.enable_table_extraction,
+      enable_llm_reasoning: input?.features?.enable_llm_reasoning ?? defaults.features.enable_llm_reasoning,
+      enable_cloud_api: input?.features?.enable_cloud_api ?? defaults.features.enable_cloud_api
+    },
+    profile: {
+      name: String(profile?.name || defaults.profile.name).trim() || defaults.profile.name,
+      customer_name: String(profile?.customer_name || defaults.profile.customer_name).trim() || defaults.profile.customer_name,
+      drawing_kinds: normalizeDelimitedValues(profile?.drawing_kinds, defaults.profile.drawing_kinds),
+      part_number_prefixes: normalizeDelimitedValues(
+        profile?.part_number_prefixes,
+        defaults.profile.part_number_prefixes
+      ),
+      field_alias: {
+        material: normalizeAiFieldAlias(fieldAlias?.material, defaults.profile.field_alias.material.names),
+        thickness: normalizeAiFieldAlias(fieldAlias?.thickness, defaults.profile.field_alias.thickness.names),
+        part_no: normalizeAiFieldAlias(fieldAlias?.part_no, defaults.profile.field_alias.part_no.names),
+        interface_no: normalizeAiFieldAlias(
+          fieldAlias?.interface_no,
+          defaults.profile.field_alias.interface_no.names
+        ),
+        weld_method: normalizeAiFieldAlias(
+          fieldAlias?.weld_method,
+          defaults.profile.field_alias.weld_method.names
+        ),
+        filler: normalizeAiFieldAlias(fieldAlias?.filler, defaults.profile.field_alias.filler.names)
+      },
+      layout_hint: {
+        prefer_title_block:
+          String(layoutHint?.prefer_title_block || defaults.profile.layout_hint.prefer_title_block).trim() ||
+          defaults.profile.layout_hint.prefer_title_block,
+        prefer_bom_region:
+          String(layoutHint?.prefer_bom_region || defaults.profile.layout_hint.prefer_bom_region).trim() ||
+          defaults.profile.layout_hint.prefer_bom_region,
+        prefer_interface_region:
+          String(layoutHint?.prefer_interface_region || defaults.profile.layout_hint.prefer_interface_region).trim() ||
+          defaults.profile.layout_hint.prefer_interface_region,
+        prefer_requirement_region:
+          String(layoutHint?.prefer_requirement_region || defaults.profile.layout_hint.prefer_requirement_region).trim() ||
+          defaults.profile.layout_hint.prefer_requirement_region
+      }
+    }
+  };
+}
+
+function getAiConfigStorageKey() {
+  return "weldlayer.ai_config.v1";
+}
+
+function setAiConfigFeedback(text, tone = "info") {
+  if (!aiConfigFeedback) return;
+  aiConfigFeedback.textContent = text;
+  if (tone === "error") {
+    aiConfigFeedback.style.color = "#d44a4a";
+    return;
+  }
+  if (tone === "success") {
+    aiConfigFeedback.style.color = "#2c9655";
+    return;
+  }
+  aiConfigFeedback.style.color = "#5f7387";
+}
+
+function formatAiProviderLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "rapidocr_local") return "RapidOCR";
+  if (normalized === "tesseract_local") return "Tesseract";
+  if (normalized === "onnx_local") return "ONNX";
+  if (normalized === "ollama_local") return "Ollama";
+  if (normalized === "openai_compatible") return "OpenAI 兼容";
+  if (normalized === "disabled") return "关闭";
+  return value || "-";
+}
+
+function setValueIfPresent(selector, value) {
+  const node = document.querySelector(selector);
+  if (!node) return;
+  node.value = value;
+}
+
+function setCheckedIfPresent(selector, checked) {
+  const node = document.querySelector(selector);
+  if (!node) return;
+  node.checked = Boolean(checked);
+}
+
+function renderAiConfigForm() {
+  const config = normalizeAiConfig(appState.aiConfig);
+  appState.aiConfig = config;
+  if (aiConfigPathLabel) {
+    aiConfigPathLabel.textContent = appState.aiConfigPath || "浏览器原型模式 / localStorage";
+  }
+  setValueIfPresent("#ai-provider-ocr", config.providers.ocr);
+  setValueIfPresent("#ai-provider-layout", config.providers.layout);
+  setValueIfPresent("#ai-provider-reasoning", config.providers.reasoning);
+  setValueIfPresent("#ai-model-ocr-dir", config.models.ocr_dir);
+  setValueIfPresent("#ai-model-layout", config.models.layout_model);
+  setValueIfPresent("#ai-model-reasoning", config.models.reasoning_model);
+  setValueIfPresent("#ai-model-endpoint", config.models.reasoning_endpoint);
+  setValueIfPresent("#ai-runtime-device", config.runtime.device);
+  setValueIfPresent("#ai-runtime-threads", config.runtime.threads);
+  setValueIfPresent("#ai-runtime-languages", config.runtime.ocr_languages.join(", "));
+  setValueIfPresent("#ai-runtime-candidate-threshold", config.runtime.candidate_confidence_threshold);
+  setValueIfPresent("#ai-runtime-association-threshold", config.runtime.association_confidence_threshold);
+  setCheckedIfPresent("#ai-runtime-offline", config.runtime.offline_mode);
+  setCheckedIfPresent("#ai-feature-ocr", config.features.enable_ocr);
+  setCheckedIfPresent("#ai-feature-layout", config.features.enable_layout_detection);
+  setCheckedIfPresent("#ai-feature-table", config.features.enable_table_extraction);
+  setCheckedIfPresent("#ai-feature-llm", config.features.enable_llm_reasoning);
+  setCheckedIfPresent("#ai-feature-cloud", config.features.enable_cloud_api);
+  setValueIfPresent("#ai-profile-name", config.profile.name);
+  setValueIfPresent("#ai-profile-customer", config.profile.customer_name);
+  setValueIfPresent("#ai-profile-drawing-kinds", config.profile.drawing_kinds.join(", "));
+  setValueIfPresent("#ai-profile-part-prefixes", config.profile.part_number_prefixes.join(", "));
+  setValueIfPresent("#ai-alias-material", config.profile.field_alias.material.names.join(", "));
+  setValueIfPresent("#ai-alias-thickness", config.profile.field_alias.thickness.names.join(", "));
+  setValueIfPresent("#ai-alias-part-no", config.profile.field_alias.part_no.names.join(", "));
+  setValueIfPresent("#ai-alias-interface-no", config.profile.field_alias.interface_no.names.join(", "));
+  setValueIfPresent("#ai-alias-weld-method", config.profile.field_alias.weld_method.names.join(", "));
+  setValueIfPresent("#ai-alias-filler", config.profile.field_alias.filler.names.join(", "));
+  setValueIfPresent("#ai-layout-title-block", config.profile.layout_hint.prefer_title_block);
+  setValueIfPresent("#ai-layout-bom-region", config.profile.layout_hint.prefer_bom_region);
+  setValueIfPresent("#ai-layout-interface-region", config.profile.layout_hint.prefer_interface_region);
+  setValueIfPresent("#ai-layout-requirement-region", config.profile.layout_hint.prefer_requirement_region);
+  if (aiSummaryOcr) aiSummaryOcr.textContent = formatAiProviderLabel(config.providers.ocr);
+  if (aiSummaryLayout) aiSummaryLayout.textContent = formatAiProviderLabel(config.providers.layout);
+  if (aiSummaryReasoning) aiSummaryReasoning.textContent = formatAiProviderLabel(config.providers.reasoning);
+  if (aiSummaryProfile) aiSummaryProfile.textContent = config.profile.name || "-";
+}
+
+function collectAiConfigFormValues() {
+  return normalizeAiConfig({
+    providers: {
+      ocr: document.querySelector("#ai-provider-ocr")?.value,
+      layout: document.querySelector("#ai-provider-layout")?.value,
+      reasoning: document.querySelector("#ai-provider-reasoning")?.value
+    },
+    models: {
+      ocr_dir: document.querySelector("#ai-model-ocr-dir")?.value,
+      layout_model: document.querySelector("#ai-model-layout")?.value,
+      reasoning_model: document.querySelector("#ai-model-reasoning")?.value,
+      reasoning_endpoint: document.querySelector("#ai-model-endpoint")?.value
+    },
+    runtime: {
+      device: document.querySelector("#ai-runtime-device")?.value,
+      threads: document.querySelector("#ai-runtime-threads")?.value,
+      offline_mode: document.querySelector("#ai-runtime-offline")?.checked,
+      ocr_languages: document.querySelector("#ai-runtime-languages")?.value,
+      candidate_confidence_threshold: document.querySelector("#ai-runtime-candidate-threshold")?.value,
+      association_confidence_threshold: document.querySelector("#ai-runtime-association-threshold")?.value
+    },
+    features: {
+      enable_ocr: document.querySelector("#ai-feature-ocr")?.checked,
+      enable_layout_detection: document.querySelector("#ai-feature-layout")?.checked,
+      enable_table_extraction: document.querySelector("#ai-feature-table")?.checked,
+      enable_llm_reasoning: document.querySelector("#ai-feature-llm")?.checked,
+      enable_cloud_api: document.querySelector("#ai-feature-cloud")?.checked
+    },
+    profile: {
+      name: document.querySelector("#ai-profile-name")?.value,
+      customer_name: document.querySelector("#ai-profile-customer")?.value,
+      drawing_kinds: document.querySelector("#ai-profile-drawing-kinds")?.value,
+      part_number_prefixes: document.querySelector("#ai-profile-part-prefixes")?.value,
+      field_alias: {
+        material: document.querySelector("#ai-alias-material")?.value,
+        thickness: document.querySelector("#ai-alias-thickness")?.value,
+        part_no: document.querySelector("#ai-alias-part-no")?.value,
+        interface_no: document.querySelector("#ai-alias-interface-no")?.value,
+        weld_method: document.querySelector("#ai-alias-weld-method")?.value,
+        filler: document.querySelector("#ai-alias-filler")?.value
+      },
+      layout_hint: {
+        prefer_title_block: document.querySelector("#ai-layout-title-block")?.value,
+        prefer_bom_region: document.querySelector("#ai-layout-bom-region")?.value,
+        prefer_interface_region: document.querySelector("#ai-layout-interface-region")?.value,
+        prefer_requirement_region: document.querySelector("#ai-layout-requirement-region")?.value
+      }
+    }
+  });
+}
+
+async function loadAiConfig(options = {}) {
+  const { silent = false } = options;
+  try {
+    if (isTauriRuntime()) {
+      const payload = JSON.parse(await invokeTauriCommand("load_ai_config", {}));
+      appState.aiConfig = normalizeAiConfig(payload?.config || DEFAULT_AI_CONFIG);
+      appState.aiConfigPath = String(payload?.config_path || "");
+    } else {
+      const raw = window.localStorage.getItem(getAiConfigStorageKey());
+      appState.aiConfig = normalizeAiConfig(raw ? JSON.parse(raw) : DEFAULT_AI_CONFIG);
+      appState.aiConfigPath = "浏览器原型模式 / localStorage";
+      if (!raw) {
+        window.localStorage.setItem(getAiConfigStorageKey(), JSON.stringify(appState.aiConfig));
+      }
+    }
+    appState.aiConfigDirty = false;
+    renderAiConfigForm();
+    if (!silent) {
+      setAiConfigFeedback("本地 AI 配置已加载", "success");
+      addEvent("本地 AI 配置已加载");
+    }
+    return appState.aiConfig;
+  } catch (error) {
+    appState.aiConfig = normalizeAiConfig(DEFAULT_AI_CONFIG);
+    appState.aiConfigPath = isTauriRuntime() ? "" : "浏览器原型模式 / localStorage";
+    renderAiConfigForm();
+    setAiConfigFeedback(`AI 配置加载失败: ${String(error)}`, "error");
+    if (!silent) {
+      addEvent(`AI 配置加载失败: ${String(error)}`);
+    }
+    return appState.aiConfig;
+  }
+}
+
+async function saveAiConfig(options = {}) {
+  const config = normalizeAiConfig(options?.config || collectAiConfigFormValues());
+  try {
+    if (isTauriRuntime()) {
+      const payload = JSON.parse(
+        await invokeTauriCommand("save_ai_config", {
+          configJson: JSON.stringify(config)
+        })
+      );
+      appState.aiConfig = normalizeAiConfig(payload?.config || config);
+      appState.aiConfigPath = String(payload?.config_path || appState.aiConfigPath || "");
+    } else {
+      window.localStorage.setItem(getAiConfigStorageKey(), JSON.stringify(config));
+      appState.aiConfig = config;
+      appState.aiConfigPath = "浏览器原型模式 / localStorage";
+    }
+    appState.aiConfigDirty = false;
+    renderAiConfigForm();
+    setAiConfigFeedback("本地 AI 配置已保存", "success");
+    addEvent("本地 AI 配置已保存");
+    return appState.aiConfig;
+  } catch (error) {
+    setAiConfigFeedback(`AI 配置保存失败: ${String(error)}`, "error");
+    addEvent(`AI 配置保存失败: ${String(error)}`);
+    throw error;
+  }
+}
+
+function markAiConfigDirty() {
+  appState.aiConfigDirty = true;
+  setAiConfigFeedback("AI 配置已修改，尚未保存", "info");
+}
+
 function statusTag(text, type) {
   return `<span class="tag ${type}">${text}</span>`;
 }
@@ -489,11 +884,13 @@ function renderSpecialSummary() {
 function renderSeamTable() {
   seamBody.innerHTML = "";
   const focusIds = getMasterFocusIds("seam");
+  const selectedReviewSeamId = String(appState.selectedReviewSeamId || "").trim();
   const rows = appState.seamRows
     .map((row, idx) => ({ row, idx }))
     .filter((item) => !focusIds || focusIds.has(item.row.id));
   if (!rows.length) {
-    seamBody.innerHTML = '<tr><td colspan="11">当前仅看对象条件下没有焊缝数据</td></tr>';
+    seamBody.innerHTML = '<tr><td colspan="14">当前仅看对象条件下没有焊缝数据</td></tr>';
+    if (seamOpenSourceBtn) seamOpenSourceBtn.disabled = true;
     document.querySelector("#status-seam-count").textContent = String(appState.seamRows.length);
     const pendingCount = appState.seamRows.filter((row) => row.status !== "confirmed").length;
     document.querySelector("#project-pending-count").textContent = `${pendingCount} 条`;
@@ -505,8 +902,13 @@ function renderSeamTable() {
     const tr = document.createElement("tr");
     const special = getSpecialCase(row);
     const stateType = row.status === "confirmed" ? "ok" : row.status === "uncertain" ? "danger" : "warn";
+    if (row.id === selectedReviewSeamId) {
+      tr.classList.add("is-selected-row");
+    }
     tr.dataset.masterScope = "seam";
     tr.dataset.masterId = row.id;
+    tr.dataset.seamReviewRow = row.id;
+    const hasSource = Boolean(String(row.sourceDrawRef || "").trim());
     tr.innerHTML = `
       <td>${row.id}</td>
       <td contenteditable="true" data-edit="${idx}:matA">${row.matA}</td>
@@ -518,11 +920,23 @@ function renderSeamTable() {
       <td>${statusTag(special.label, special.type)}</td>
       <td>${row.conf.toFixed(2)}</td>
       <td>${statusTag(row.status, stateType)}</td>
-      <td><button class="ghost" data-seam-delete="${idx}">删除</button></td>
+      <td>${row.sourceType || "-"}</td>
+      <td>${row.sourceDrawRef || "-"}</td>
+      <td>${row.sourceCandidateId || "-"}</td>
+      <td>
+        <div class="button-row">
+          <button class="ghost" data-seam-open-source="${idx}" ${hasSource ? "" : "disabled"}>回图纸</button>
+          <button class="ghost" data-seam-delete="${idx}">删除</button>
+        </div>
+      </td>
     `;
     seamBody.appendChild(tr);
   });
   document.querySelector("#status-seam-count").textContent = String(appState.seamRows.length);
+  const selectedRow = appState.seamRows.find((row) => String(row.id || "") === selectedReviewSeamId) || null;
+  if (seamOpenSourceBtn) {
+    seamOpenSourceBtn.disabled = !String(selectedRow?.sourceDrawRef || "").trim();
+  }
   const pendingCount = appState.seamRows.filter((row) => row.status !== "confirmed").length;
   document.querySelector("#project-pending-count").textContent = `${pendingCount} 条`;
   renderSpecialSummary();
@@ -1862,6 +2276,90 @@ function locateMasterItem(scope, itemId) {
   return true;
 }
 
+function findParseQueueItemByDrawRef(drawRef) {
+  const normalized = String(drawRef || "").trim().toLowerCase();
+  if (!normalized) return null;
+  return (
+    appState.parseQueue.find((item) => {
+      const fileName = String(item.fileName || "").trim().toLowerCase();
+      const path = String(item.path || "").trim().toLowerCase();
+      const basename = basenameFromPath(item.path || item.fileName || "").toLowerCase();
+      return normalized === fileName || normalized === path || normalized === basename;
+    }) || null
+  );
+}
+
+function setSelectedReviewSeam(seamId, options = {}) {
+  const { silent = false, render = true } = options;
+  const normalizedId = String(seamId || "").trim();
+  const exists = appState.seamRows.some((row) => String(row.id || "") === normalizedId);
+  appState.selectedReviewSeamId = exists ? normalizedId : "";
+  if (render) renderSeamTable();
+  if (exists && !silent) {
+    addEvent(`已选中焊缝确认项 ${normalizedId}`);
+  }
+  return exists;
+}
+
+function getSelectedReviewSeamRow() {
+  const selectedId = String(appState.selectedReviewSeamId || "").trim();
+  if (!selectedId) return null;
+  return appState.seamRows.find((row) => String(row.id || "") === selectedId) || null;
+}
+
+function buildParseQuickSourceSummary(item, queueItem, kind) {
+  const anchor = normalizePreviewAnchor(item?.anchor_bbox);
+  const pageLabel = anchor ? `第 ${getPreviewAnchorPageIndex(anchor) + 1} 页` : "未标注页码";
+  const anchorLabel = anchor ? `x=${(anchor.x * 100).toFixed(1)}%, y=${(anchor.y * 100).toFixed(1)}%` : "未标注位置";
+  return `
+    <section class="parse-quick-panel">
+      <h4>来源摘要</h4>
+      <div class="parse-quick-grid">
+        ${buildParseQuickReadOnlyField("来源文件", queueItem?.fileName || queueItem?.path || item?.draw_ref || "-")}
+        ${buildParseQuickReadOnlyField("来源类型", kind === "seam" ? (item?.source_kind || "explicit") : "candidate")}
+        ${buildParseQuickReadOnlyField("页码", pageLabel)}
+        ${buildParseQuickReadOnlyField("位置", anchorLabel)}
+      </div>
+    </section>
+  `;
+}
+
+function navigateReviewSeamToParseSource(row, options = {}) {
+  const { openQuickEdit = false, silent = false } = options;
+  const targetRow = row || getSelectedReviewSeamRow();
+  if (!targetRow) {
+    if (!silent) addEvent("请先在焊缝确认页选中一条焊缝");
+    return false;
+  }
+  const queueItem = findParseQueueItemByDrawRef(targetRow.sourceDrawRef);
+  if (!queueItem) {
+    if (!silent) addEvent(`未找到来源图纸：${targetRow.sourceDrawRef || "未记录"}`);
+    return false;
+  }
+
+  setView("import");
+  setSelectedParseQueue(queueItem.id, { silent: true });
+
+  if (String(targetRow.sourceType || "") === "candidate" && String(targetRow.sourceCandidateId || "").trim()) {
+    setSelectedParseCandidate(targetRow.sourceCandidateId, { silent: true });
+    if (openQuickEdit) {
+      openParseQuickEditModal("candidate", targetRow.sourceCandidateId, { silent: true });
+    }
+  } else if (appState.parseQueue.find((item) => item.id === queueItem.id)?.seams?.some((seam) => String(seam.weld_id || "") === String(targetRow.id || ""))) {
+    setSelectedParseSeam(targetRow.id, { silent: true });
+    if (openQuickEdit) {
+      openParseQuickEditModal("seam", targetRow.id, { silent: true });
+    }
+  } else {
+    renderParseSelectedFilePanel();
+  }
+
+  if (!silent) {
+    addEvent(`已回到来源图纸定位焊缝: ${targetRow.id}`);
+  }
+  return true;
+}
+
 function normalizeReviewActionScopes(scopes) {
   const values = Array.isArray(scopes) ? scopes : [];
   return [...new Set(values.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean))];
@@ -2981,6 +3479,9 @@ function setView(viewKey) {
   document.querySelector("#breadcrumb").textContent = meta.breadcrumb;
   document.querySelector("#detail-title").textContent = meta.detailTitle;
   document.querySelector("#detail-content").textContent = meta.detailText;
+  if (viewKey === "settings") {
+    renderAiConfigForm();
+  }
 }
 
 function isTauriRuntime() {
@@ -3599,7 +4100,109 @@ function formatParseCandidateGuess(candidate) {
       ? `${thicknessA.toFixed(1)} / ${thicknessB.toFixed(1)}`
       : thicknessA.toFixed(1)
     : "-";
-  return `${materials} · ${thickness}mm · ${candidate?.weld_symbol_guess || "-"} · ${candidate?.position_guess || "-"}`;
+  const thicknessLabel = thickness === "-" ? "-" : `${thickness}mm`;
+  return `${materials} · ${thicknessLabel} · ${candidate?.weld_symbol_guess || "-"} · ${candidate?.position_guess || "-"}`;
+}
+
+function getParseCandidateEvidenceSummary(candidate, limit = 2) {
+  const evidence = Array.isArray(candidate?.evidence) ? candidate.evidence : [];
+  const summaries = evidence
+    .map((item) => String(item?.summary || item?.type || "").trim())
+    .filter(Boolean)
+    .slice(0, limit);
+  return summaries.length ? summaries.join("；") : "无证据摘要";
+}
+
+function parseEvidenceListValues(summary) {
+  const text = String(summary || "").trim();
+  if (!text) return [];
+  const value = text.includes(":") ? text.split(":").slice(1).join(":") : text;
+  return value
+    .split(/[\/,，；;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function collectUniqueStrings(values) {
+  const seen = new Set();
+  return values.filter((item) => {
+    const text = String(item || "").trim();
+    if (!text) return false;
+    const key = text.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildParseFileContextData(item) {
+  const candidates = Array.isArray(item?.candidates) ? item.candidates : [];
+  const seams = Array.isArray(item?.seams) ? item.seams : [];
+  const resultLogs = Array.isArray(appState.parseResult?.logs) ? appState.parseResult.logs : [];
+  const fileName = String(item?.fileName || basenameFromPath(item?.path || "")).trim();
+  const fileLogs = resultLogs
+    .map((log) => String(log?.message || "").trim())
+    .filter((message) => message && (!fileName || message.includes(fileName) || message.includes("context page")));
+  const materials = collectUniqueStrings([
+    ...seams.map((seam) => seam?.material_spec),
+    ...candidates.flatMap((candidate) => [candidate?.material_guess_a, candidate?.material_guess_b])
+  ]);
+  const methods = collectUniqueStrings(
+    candidates.flatMap((candidate) =>
+      (Array.isArray(candidate?.evidence) ? candidate.evidence : [])
+        .filter((entry) => String(entry?.type || "").includes("weld_method"))
+        .flatMap((entry) => parseEvidenceListValues(entry?.summary))
+    )
+  );
+  const fillers = collectUniqueStrings(
+    candidates.flatMap((candidate) =>
+      (Array.isArray(candidate?.evidence) ? candidate.evidence : [])
+        .filter((entry) => String(entry?.type || "").includes("filler"))
+        .flatMap((entry) => parseEvidenceListValues(entry?.summary))
+    )
+  );
+  const associations = candidates.filter((candidate) =>
+    (Array.isArray(candidate?.evidence) ? candidate.evidence : []).some((entry) => {
+      const type = String(entry?.type || "");
+      return type === "part_row_association" || type.startsWith("table_row_");
+    })
+  ).length;
+  return {
+    materials,
+    methods,
+    fillers,
+    associations,
+    logs: fileLogs.slice(-3)
+  };
+}
+
+function renderParseFileContextSummary(item) {
+  if (!parseFileContextSummary) return;
+  if (!item) {
+    parseFileContextSummary.innerHTML = '<p class="mono">当前未选择图纸。</p>';
+    return;
+  }
+  const context = buildParseFileContextData(item);
+  const notes = context.logs.length
+    ? `<ul class="queue-list compact">${context.logs
+        .map((message) => `<li><span>${escapeHtml(message)}</span></li>`)
+        .join("")}</ul>`
+    : '<p class="mono">当前没有上下文日志。</p>';
+  parseFileContextSummary.innerHTML = `
+    <div class="pill-row">
+      <span class="pill">材料: ${escapeHtml(context.materials.join(" / ") || "-")}</span>
+      <span class="pill">方法: ${escapeHtml(context.methods.join(" / ") || "-")}</span>
+      <span class="pill">焊材: ${escapeHtml(context.fillers.join(" / ") || "-")}</span>
+      <span class="pill">表格关联: ${context.associations}</span>
+    </div>
+    ${notes}
+  `;
+}
+
+function formatMaybeNumber(value, digits = 1) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "-";
+  return number.toFixed(digits);
 }
 
 function getSelectedParseQueueItem() {
@@ -3633,6 +4236,7 @@ function setSelectedParseQueue(queueId, options = {}) {
   stopParseHotspotDrag({ announce: false });
   closeParseQuickEditModal({ silent: true });
   appState.parsePreviewAddSeamMode = false;
+  appState.parsePreviewHotspotClick = null;
   appState.parseShortcutPanelVisible = false;
   appState.parsePreviewPageIndex = 0;
   appState.parseSelectedQueueId = target.id;
@@ -3803,6 +4407,33 @@ function getParseQuickEditTarget() {
   return null;
 }
 
+function getParseQuickEditSequence(state = uiState.parseQuickEdit) {
+  const selectedItem = getSelectedParseQueueItem();
+  if (!state || !selectedItem) return { kind: "", ids: [], index: -1, total: 0 };
+  const kind = String(state.kind || "").trim();
+  const currentId = String(state.itemId || "").trim();
+  const ids =
+    kind === "seam"
+      ? (selectedItem.seams || []).map((item) => String(item?.weld_id || "")).filter(Boolean)
+      : kind === "candidate"
+        ? (selectedItem.candidates || []).map((item) => String(item?.candidate_id || "")).filter(Boolean)
+        : [];
+  return {
+    kind,
+    ids,
+    index: ids.indexOf(currentId),
+    total: ids.length
+  };
+}
+
+function moveParseQuickEdit(step) {
+  const sequence = getParseQuickEditSequence();
+  if (!sequence.total || sequence.index < 0) return false;
+  const nextIndex = sequence.index + Number(step || 0);
+  if (nextIndex < 0 || nextIndex >= sequence.total) return false;
+  return openParseQuickEditModal(sequence.kind, sequence.ids[nextIndex], { silent: true });
+}
+
 function closeParseQuickEditModal(options = {}) {
   const { silent = false } = options;
   if (!uiState.parseQuickEdit && parseQuickModal?.classList.contains("hidden")) return false;
@@ -3867,8 +4498,13 @@ function renderParseQuickEditModal() {
 
   const { kind, item, queueItem } = target;
   const isSeam = kind === "seam";
+  const sequence = getParseQuickEditSequence();
+  const navLabel =
+    sequence.total > 0 && sequence.index >= 0 ? `第 ${sequence.index + 1} / ${sequence.total} 条` : "单项";
   parseQuickTitle.textContent = isSeam ? `焊缝 ${item.weld_id || "-"}` : `候选 ${item.candidate_id || "-"}`;
-  parseQuickMeta.textContent = `${queueItem.fileName || queueItem.path || "-"} · ${isSeam ? "显式/手动焊缝" : "候选焊缝"} · 双击图上标注可快速浏览和修改`;
+  parseQuickMeta.textContent = `${queueItem.fileName || queueItem.path || "-"} · ${isSeam ? "显式/手动焊缝" : "候选焊缝"} · ${navLabel}`;
+  if (parseQuickPrevBtn) parseQuickPrevBtn.disabled = sequence.index <= 0;
+  if (parseQuickNextBtn) parseQuickNextBtn.disabled = sequence.index < 0 || sequence.index >= sequence.total - 1;
 
   if (isSeam) {
     parseQuickBody.innerHTML = `
@@ -3888,6 +4524,7 @@ function renderParseQuickEditModal() {
           { value: "uncertain", label: "可疑" }
         ])}
       </div>
+      ${buildParseQuickSourceSummary(item, queueItem, "seam")}
     `;
   } else {
     const evidenceHtml = Array.isArray(item.evidence) && item.evidence.length
@@ -3927,6 +4564,7 @@ function renderParseQuickEditModal() {
         <h4>识别证据</h4>
         <ul class="parse-quick-evidence">${evidenceHtml}</ul>
       </section>
+      ${buildParseQuickSourceSummary(item, queueItem, "candidate")}
     `;
   }
 
@@ -4011,6 +4649,52 @@ function saveParseQuickEditModal() {
   return true;
 }
 
+function upsertSeamReviewRow(row) {
+  const nextRow = {
+    sourceType: "",
+    sourceDrawRef: "",
+    sourceCandidateId: "",
+    ...row
+  };
+  const candidateId = String(nextRow.sourceCandidateId || "").trim();
+  const existingIndex = appState.seamRows.findIndex(
+    (item) => String(item.id || "") === String(nextRow.id || "") || (candidateId && String(item.sourceCandidateId || "") === candidateId)
+  );
+  if (existingIndex >= 0) {
+    appState.seamRows[existingIndex] = {
+      ...appState.seamRows[existingIndex],
+      ...nextRow
+    };
+  } else {
+    appState.seamRows.push(nextRow);
+  }
+  return nextRow.id;
+}
+
+function saveParseQuickEditToSeamConfirmation() {
+  const target = getParseQuickEditTarget();
+  if (!target) return false;
+  if (!saveParseQuickEditModal()) return false;
+
+  const refreshedTarget = target.kind === "seam"
+    ? getSelectedParseQueueItem()?.seams?.find((item) => String(item?.weld_id || "") === target.itemId)
+    : getSelectedParseQueueItem()?.candidates?.find((item) => String(item?.candidate_id || "") === target.itemId);
+  if (!refreshedTarget) return false;
+
+  const nextRow =
+    target.kind === "seam"
+      ? mapExtractedSeamToReviewRow(refreshedTarget, appState.seamRows.length)
+      : mapCandidateToReviewRow(refreshedTarget, appState.seamRows.length);
+  const seamId = upsertSeamReviewRow(nextRow);
+  clearSeamImportPreview();
+  renderSeamTable();
+  setMasterDirty("seam", true);
+  setView("seam");
+  focusMasterRow("seam", seamId);
+  addEvent(`已将${target.kind === "seam" ? "焊缝" : "候选焊缝"}送入焊缝确认: ${seamId}`);
+  return true;
+}
+
 function setSelectedParseItemAnchor(anchor) {
   const selectedSeamId = String(appState.parseSelectedSeamId || "").trim();
   const selectedCandidateId = String(appState.parseSelectedCandidateId || "").trim();
@@ -4048,6 +4732,7 @@ function stopParseHotspotDrag(options = {}) {
   const drag = appState.parsePreviewDrag;
   if (!drag) return;
   appState.parsePreviewDrag = null;
+  appState.parsePreviewHotspotClick = null;
   if (drag.moved) {
     appState.parsePreviewSuppressClickUntil = Date.now() + 250;
   }
@@ -4634,7 +5319,7 @@ function renderParsePreview() {
               <td>${item.draw_ref || "-"}</td>
               <td>${item.weld_symbol || "-"}</td>
               <td>${item.material_spec || "-"}</td>
-              <td>${(Number(item.thickness_mm) || 0).toFixed(1)}</td>
+              <td>${formatMaybeNumber(item.thickness_mm)}</td>
               <td>${item.position_code || "-"}</td>
               <td>${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"}</td>
             </tr>
@@ -4653,13 +5338,14 @@ function renderParsePreview() {
               <td>${item.draw_ref || "-"}</td>
               <td>${item.candidate_type || "-"}</td>
               <td>${formatParseCandidateGuess(item)}</td>
+              <td>${escapeHtml(getParseCandidateEvidenceSummary(item))}</td>
               <td>${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"}</td>
               <td>${statusTag(reviewMeta.label, reviewMeta.type)}</td>
             </tr>
           `;
         })
         .join("")
-    : '<tr><td colspan="6">本次解析未生成候选焊缝。</td></tr>';
+    : '<tr><td colspan="7">本次解析未生成候选焊缝。</td></tr>';
   parseErrorList.innerHTML = errors
     .map(
       (item) => `
@@ -4689,6 +5375,7 @@ function renderParseSelectedFilePanel() {
     !parseFileErrorCount ||
     !parseFileCandidateCount ||
     !parseFileSource ||
+    !parseFileContextSummary ||
     !parseFileSeamBody ||
     !parseFileCandidateBody ||
     !parseFileErrorList
@@ -4710,6 +5397,7 @@ function renderParseSelectedFilePanel() {
       parseShortcutsBtn.disabled = true;
       parseShortcutsBtn.classList.remove("is-active-tool");
     }
+    if (parseQuickOpenBtn) parseQuickOpenBtn.disabled = true;
     if (parseAddSeamBtn) {
       parseAddSeamBtn.textContent = "新增焊缝";
       parseAddSeamBtn.disabled = true;
@@ -4749,8 +5437,9 @@ function renderParseSelectedFilePanel() {
     parseFileErrorCount.textContent = "0";
     parseFileCandidateCount.textContent = "0";
     parseFileSource.textContent = "-";
+    parseFileContextSummary.innerHTML = '<p class="mono">当前未选择图纸。</p>';
     parseFileSeamBody.innerHTML = '<tr><td colspan="7">当前没有可显示的文件级焊缝。</td></tr>';
-    parseFileCandidateBody.innerHTML = '<tr><td colspan="6">当前没有可显示的候选焊缝。</td></tr>';
+    parseFileCandidateBody.innerHTML = '<tr><td colspan="7">当前没有可显示的候选焊缝。</td></tr>';
     parseFileErrorList.innerHTML = "";
     return;
   }
@@ -4783,6 +5472,7 @@ function renderParseSelectedFilePanel() {
   parseFileErrorCount.textContent = String(errors.length);
   parseFileCandidateCount.textContent = String(candidates.length);
   parseFileSource.textContent = formatParseSourceLabel(item.source);
+  renderParseFileContextSummary(item);
   if (parseDetailGrid) parseDetailGrid.classList.toggle("is-preview-expanded", appState.parsePreviewExpanded);
   parsePreviewCanvas.classList.toggle("is-annotate-mode", appState.parsePreviewMode === "annotate");
   if (parsePreviewModeBtn) {
@@ -4792,6 +5482,9 @@ function renderParseSelectedFilePanel() {
   if (parseShortcutsBtn) {
     parseShortcutsBtn.disabled = false;
     parseShortcutsBtn.classList.toggle("is-active-tool", appState.parseShortcutPanelVisible);
+  }
+  if (parseQuickOpenBtn) {
+    parseQuickOpenBtn.disabled = !(selectedSeamId || selectedCandidateId);
   }
   if (parseAddSeamBtn) {
     parseAddSeamBtn.textContent = appState.parsePreviewAddSeamMode ? "点击图纸放置焊缝" : "新增焊缝";
@@ -4937,7 +5630,7 @@ function renderParseSelectedFilePanel() {
               <td>${seam.weld_id || "-"}</td>
               <td>${seam.weld_symbol || "-"}</td>
               <td>${seam.material_spec || "-"}</td>
-              <td>${(Number(seam.thickness_mm) || 0).toFixed(1)}</td>
+              <td>${formatMaybeNumber(seam.thickness_mm)}</td>
               <td>${seam.position_code || "-"}</td>
               <td>${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"}</td>
               <td>${statusTag(seamReviewMeta.label, seamReviewMeta.type)}</td>
@@ -4960,6 +5653,7 @@ function renderParseSelectedFilePanel() {
               <td>${candidate.candidate_id || "-"}</td>
               <td>${candidate.candidate_type || "-"}</td>
               <td>${formatParseCandidateGuess(candidate)}</td>
+              <td>${escapeHtml(getParseCandidateEvidenceSummary(candidate))}</td>
               <td>${Number.isFinite(confidence) ? confidence.toFixed(2) : "-"}</td>
               <td>${statusTag(reviewMeta.label, reviewMeta.type)}</td>
               <td>
@@ -4973,7 +5667,7 @@ function renderParseSelectedFilePanel() {
           `;
         })
         .join("")
-    : '<tr><td colspan="6">当前图纸没有候选焊缝。</td></tr>';
+    : '<tr><td colspan="7">当前图纸没有候选焊缝。</td></tr>';
 
   parseFileErrorList.innerHTML = errors
     .map(
@@ -5392,19 +6086,19 @@ async function runMockParse(queue, request) {
 }
 
 function mapExtractedSeamToReviewRow(item, index) {
-  const materialSpec = String(item.material_spec || "P-No.1");
+  const materialSpec = String(item.material_spec || "");
   const [matA, matB] = materialSpec.includes("/") ? materialSpec.split("/").map((value) => value.trim()) : [materialSpec, materialSpec];
   const confidence = Number(item.confidence_score) || 0;
   const reviewStatus = normalizeParseSeamReviewStatus(item.review_status, confidence);
   const sourceType = String(item.source_kind || "").trim().toLowerCase() === "manual" ? "manual" : "explicit";
   return {
     id: String(item.weld_id || `W-PARSE-${index + 1}`),
-    matA: matA || "P-No.1",
-    matB: matB || matA || "P-No.1",
+    matA: matA || "",
+    matB: matB || matA || "",
     thkA: Number(item.thickness_mm) || 0,
     thkB: Number(item.thickness_mm) || 0,
-    pos: String(item.position_code || "1G"),
-    symbol: String(item.weld_symbol || "BW"),
+    pos: String(item.position_code || ""),
+    symbol: String(item.weld_symbol || ""),
     conf: confidence,
     status: reviewStatus === "uncertain" ? "uncertain" : reviewStatus === "confirmed" ? "confirmed" : "pending",
     sourceType,
@@ -5418,12 +6112,12 @@ function mapCandidateToReviewRow(item, index) {
   const reviewStatus = normalizeParseCandidateReviewStatus(item.review_status, confidence);
   return {
     id: String(item.accepted_weld_id || item.candidate_id || `W-CAND-${index + 1}`),
-    matA: String(item.material_guess_a || "P-No.1"),
-    matB: String(item.material_guess_b || item.material_guess_a || "P-No.1"),
+    matA: String(item.material_guess_a || ""),
+    matB: String(item.material_guess_b || item.material_guess_a || ""),
     thkA: Number(item.thickness_guess_a_mm) || 0,
     thkB: Number(item.thickness_guess_b_mm) || Number(item.thickness_guess_a_mm) || 0,
-    pos: String(item.position_guess || "1G"),
-    symbol: String(item.weld_symbol_guess || "BW"),
+    pos: String(item.position_guess || ""),
+    symbol: String(item.weld_symbol_guess || ""),
     conf: confidence,
     status: reviewStatus === "accepted" ? "pending" : reviewStatus === "uncertain" ? "uncertain" : "pending",
     sourceType: "candidate",
@@ -5469,6 +6163,7 @@ function loadParseResultIntoSeams(options = {}) {
     ...explicitSeams.map((item, index) => mapExtractedSeamToReviewRow(item, index)),
     ...acceptedCandidates.map((item, index) => mapCandidateToReviewRow(item, explicitSeams.length + index))
   ];
+  appState.selectedReviewSeamId = appState.seamRows[0]?.id || "";
   renderSeamTable();
   setMasterDirty("seam", true);
   setView("seam");
@@ -5777,7 +6472,12 @@ function seamRowToPayload(row) {
     thickness_b_mm: Number(row.thkB),
     position_code: row.pos,
     process_hint: "GTAW",
-    review_status: toReviewStatus(row.status)
+    review_status: toReviewStatus(row.status),
+    weld_symbol: row.symbol || "",
+    confidence_score: Number(row.conf),
+    source_kind: row.sourceType || "",
+    source_draw_ref: row.sourceDrawRef || "",
+    source_candidate_id: row.sourceCandidateId || ""
   };
 }
 
@@ -5789,9 +6489,12 @@ function seamPayloadToRow(item) {
     thkA: Number(item.thickness_a_mm) || 0,
     thkB: Number(item.thickness_b_mm) || 0,
     pos: String(item.position_code || ""),
-    symbol: "BW",
-    conf: 0.8,
-    status: fromReviewStatus(item.review_status)
+    symbol: String(item.weld_symbol || "BW"),
+    conf: Number(item.confidence_score) || 0.8,
+    status: fromReviewStatus(item.review_status),
+    sourceType: String(item.source_kind || ""),
+    sourceDrawRef: String(item.source_draw_ref || ""),
+    sourceCandidateId: String(item.source_candidate_id || "")
   };
 }
 
@@ -6106,6 +6809,9 @@ async function syncMasterDataToBackend() {
 async function reloadSeamRowsFromBackend() {
   const rows = await listCommandItems("list_seams");
   appState.seamRows = rows.map((item) => seamPayloadToRow(item));
+  if (!appState.seamRows.some((row) => String(row.id || "") === String(appState.selectedReviewSeamId || ""))) {
+    appState.selectedReviewSeamId = appState.seamRows[0]?.id || "";
+  }
   renderSeamTable();
   clearSeamImportPreview();
   setMasterDirty("seam", false);
@@ -7298,7 +8004,6 @@ function initHandlers() {
         itemId,
         moved: false
       };
-      renderParseSelectedFilePanel();
       event.preventDefault();
     });
 
@@ -7307,14 +8012,47 @@ function initHandlers() {
       if (appState.parsePreviewDrag?.moved) return;
       const hotspot = event.target.closest("[data-parse-seam-select]");
       if (hotspot) {
+        const hotspotId = String(hotspot.dataset.parseSeamSelect || "");
+        const lastClick = appState.parsePreviewHotspotClick;
+        const now = Date.now();
+        if (
+          lastClick &&
+          lastClick.kind === "seam" &&
+          lastClick.itemId === hotspotId &&
+          now - Number(lastClick.time || 0) < 320
+        ) {
+          appState.parsePreviewHotspotClick = null;
+          event.preventDefault();
+          event.stopPropagation();
+          openParseQuickEditModal("seam", hotspotId);
+          return;
+        }
+        appState.parsePreviewHotspotClick = { kind: "seam", itemId: hotspotId, time: now };
         setSelectedParseSeam(hotspot.dataset.parseSeamSelect || "");
         return;
       }
       const candidateHotspot = event.target.closest("[data-parse-candidate-select]");
       if (candidateHotspot) {
+        const hotspotId = String(candidateHotspot.dataset.parseCandidateSelect || "");
+        const lastClick = appState.parsePreviewHotspotClick;
+        const now = Date.now();
+        if (
+          lastClick &&
+          lastClick.kind === "candidate" &&
+          lastClick.itemId === hotspotId &&
+          now - Number(lastClick.time || 0) < 320
+        ) {
+          appState.parsePreviewHotspotClick = null;
+          event.preventDefault();
+          event.stopPropagation();
+          openParseQuickEditModal("candidate", hotspotId);
+          return;
+        }
+        appState.parsePreviewHotspotClick = { kind: "candidate", itemId: hotspotId, time: now };
         setSelectedParseCandidate(candidateHotspot.dataset.parseCandidateSelect || "");
         return;
       }
+      appState.parsePreviewHotspotClick = null;
       if (appState.parsePreviewMode !== "annotate" || !appState.parsePreviewAddSeamMode) return;
       const anchor = buildDragAnchorFromPointer(event, "seam", "");
       if (!anchor) return;
@@ -7322,7 +8060,7 @@ function initHandlers() {
         setParsePreviewAddSeamMode(false, { silent: true });
       }
     });
-    parsePreviewHotspots.addEventListener("dblclick", (event) => {
+    parsePreviewHotspots.addEventListener("contextmenu", (event) => {
       const seamHotspot = event.target.closest("[data-parse-seam-select]");
       if (seamHotspot) {
         event.preventDefault();
@@ -7333,6 +8071,19 @@ function initHandlers() {
       if (candidateHotspot) {
         event.preventDefault();
         openParseQuickEditModal("candidate", candidateHotspot.dataset.parseCandidateSelect || "");
+      }
+    });
+    const handleParsePreviewDoubleClick = (event) => {
+      const seamHotspot = event.target.closest("[data-parse-seam-select]");
+      if (seamHotspot) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const candidateHotspot = event.target.closest("[data-parse-candidate-select]");
+      if (candidateHotspot) {
+        event.preventDefault();
+        event.stopPropagation();
         return;
       }
       if (appState.parsePreviewMode !== "annotate") return;
@@ -7356,12 +8107,41 @@ function initHandlers() {
         page_index: Math.max(0, Number(appState.parsePreviewPageIndex) || 0)
       };
       setSelectedParseItemAnchor(anchor);
-    });
+    };
+
+    parsePreviewHotspots.addEventListener("dblclick", handleParsePreviewDoubleClick);
+    parsePreviewCanvas?.addEventListener("dblclick", handleParsePreviewDoubleClick);
   }
 
   if (parseQuickCloseBtn) {
     parseQuickCloseBtn.addEventListener("click", () => {
       closeParseQuickEditModal();
+    });
+  }
+
+  if (parseQuickOpenBtn) {
+    parseQuickOpenBtn.addEventListener("click", () => {
+      const selectedSeamId = String(appState.parseSelectedSeamId || "").trim();
+      const selectedCandidateId = String(appState.parseSelectedCandidateId || "").trim();
+      if (selectedSeamId) {
+        openParseQuickEditModal("seam", selectedSeamId);
+        return;
+      }
+      if (selectedCandidateId) {
+        openParseQuickEditModal("candidate", selectedCandidateId);
+      }
+    });
+  }
+
+  if (parseQuickPrevBtn) {
+    parseQuickPrevBtn.addEventListener("click", () => {
+      moveParseQuickEdit(-1);
+    });
+  }
+
+  if (parseQuickNextBtn) {
+    parseQuickNextBtn.addEventListener("click", () => {
+      moveParseQuickEdit(1);
     });
   }
 
@@ -7374,6 +8154,12 @@ function initHandlers() {
   if (parseQuickSaveBtn) {
     parseQuickSaveBtn.addEventListener("click", () => {
       saveParseQuickEditModal();
+    });
+  }
+
+  if (parseQuickSaveOpenBtn) {
+    parseQuickSaveOpenBtn.addEventListener("click", () => {
+      saveParseQuickEditToSeamConfirmation();
     });
   }
 
@@ -7407,18 +8193,34 @@ function initHandlers() {
   window.addEventListener("keydown", (event) => {
     if (appState.view !== "import") return;
     if (isTypingTarget(event.target) && event.key !== "Escape") return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
 
     const key = String(event.key || "");
     const normalizedKey = key.toLowerCase();
 
     if (uiState.parseQuickEdit) {
+      if (normalizedKey === "arrowleft") {
+        event.preventDefault();
+        moveParseQuickEdit(-1);
+        return;
+      }
+      if (normalizedKey === "arrowright") {
+        event.preventDefault();
+        moveParseQuickEdit(1);
+        return;
+      }
+      if ((normalizedKey === "enter" && (event.ctrlKey || event.metaKey)) || (normalizedKey === "s" && (event.ctrlKey || event.metaKey))) {
+        event.preventDefault();
+        saveParseQuickEditModal();
+        return;
+      }
       if (normalizedKey === "escape") {
         event.preventDefault();
         closeParseQuickEditModal();
       }
       return;
     }
+
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
 
     const selectedItem = getSelectedParseQueueItem();
 
@@ -7616,8 +8418,9 @@ function initHandlers() {
   if (addSeamBtn) {
     addSeamBtn.addEventListener("click", () => {
       clearSeamImportPreview();
+      const nextId = getNextSeamId();
       appState.seamRows.push({
-        id: getNextSeamId(),
+        id: nextId,
         matA: "P-No.1",
         matB: "P-No.1",
         thkA: 10,
@@ -7625,11 +8428,21 @@ function initHandlers() {
         pos: "1G",
         symbol: "BW",
         conf: 0.8,
-        status: "pending"
+        status: "pending",
+        sourceType: "manual",
+        sourceDrawRef: "",
+        sourceCandidateId: ""
       });
+      appState.selectedReviewSeamId = nextId;
       renderSeamTable();
       setMasterDirty("seam", true);
       addEvent("新增焊缝行");
+    });
+  }
+
+  if (seamOpenSourceBtn) {
+    seamOpenSourceBtn.addEventListener("click", () => {
+      navigateReviewSeamToParseSource(getSelectedReviewSeamRow());
     });
   }
 
@@ -7820,15 +8633,41 @@ function initHandlers() {
   );
 
   seamBody.addEventListener("click", (event) => {
+    const locateBtn = event.target.closest("[data-seam-open-source]");
+    if (locateBtn) {
+      const idx = Number(locateBtn.dataset.seamOpenSource);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= appState.seamRows.length) return;
+      const row = appState.seamRows[idx];
+      setSelectedReviewSeam(row.id, { silent: true });
+      navigateReviewSeamToParseSource(row);
+      return;
+    }
     const btn = event.target.closest("[data-seam-delete]");
-    if (!btn) return;
-    const idx = Number(btn.dataset.seamDelete);
-    if (!Number.isInteger(idx) || idx < 0 || idx >= appState.seamRows.length) return;
-    const [removed] = appState.seamRows.splice(idx, 1);
-    clearSeamImportPreview();
-    renderSeamTable();
-    setMasterDirty("seam", true);
-    addEvent(`焊缝已删除: ${removed?.id || idx}`);
+    if (btn) {
+      const idx = Number(btn.dataset.seamDelete);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= appState.seamRows.length) return;
+      const [removed] = appState.seamRows.splice(idx, 1);
+      if (String(appState.selectedReviewSeamId || "") === String(removed?.id || "")) {
+        appState.selectedReviewSeamId = "";
+      }
+      clearSeamImportPreview();
+      renderSeamTable();
+      setMasterDirty("seam", true);
+      addEvent(`焊缝已删除: ${removed?.id || idx}`);
+      return;
+    }
+    const row = event.target.closest("[data-seam-review-row]");
+    if (!row) return;
+    setSelectedReviewSeam(row.dataset.seamReviewRow || "");
+  });
+
+  seamBody.addEventListener("dblclick", (event) => {
+    const row = event.target.closest("[data-seam-review-row]");
+    if (!row) return;
+    const target = appState.seamRows.find((item) => String(item.id || "") === String(row.dataset.seamReviewRow || ""));
+    if (!target) return;
+    setSelectedReviewSeam(target.id, { silent: true });
+    navigateReviewSeamToParseSource(target, { openQuickEdit: true });
   });
 
   document.querySelector("#btn-run-match").addEventListener("click", async () => {
@@ -7980,6 +8819,38 @@ function initHandlers() {
     addEvent(`模板映射保存成功，版本 ${version}`);
   });
 
+  ["#ai-provider-form", "#ai-runtime-form", "#ai-profile-form"].forEach((selector) => {
+    const form = document.querySelector(selector);
+    if (!form) return;
+    form.addEventListener("input", () => {
+      markAiConfigDirty();
+    });
+    form.addEventListener("change", () => {
+      markAiConfigDirty();
+    });
+  });
+
+  if (aiConfigReloadBtn) {
+    aiConfigReloadBtn.addEventListener("click", async () => {
+      await loadAiConfig();
+    });
+  }
+
+  if (aiConfigResetBtn) {
+    aiConfigResetBtn.addEventListener("click", () => {
+      appState.aiConfig = normalizeAiConfig(DEFAULT_AI_CONFIG);
+      renderAiConfigForm();
+      markAiConfigDirty();
+      addEvent("AI 配置已恢复为默认值，待保存");
+    });
+  }
+
+  if (aiConfigSaveBtn) {
+    aiConfigSaveBtn.addEventListener("click", async () => {
+      await saveAiConfig();
+    });
+  }
+
   document.querySelector("#btn-export-word").addEventListener("click", () => {
     document.querySelector("#export-feedback").textContent = `Word 导出成功: WPS_${Date.now()}.docx`;
     addEvent("Word 导出完成");
@@ -8020,6 +8891,7 @@ function startClock() {
 }
 
 function init() {
+  renderAiConfigForm();
   renderSeamTable();
   clearSeamImportPreview();
   renderPqr();
@@ -8042,6 +8914,7 @@ function init() {
   resetParseWorkspace();
   setStatusSnapshot();
   initHandlers();
+  loadAiConfig({ silent: true });
   bootstrapProjectContext();
   startClock();
 }

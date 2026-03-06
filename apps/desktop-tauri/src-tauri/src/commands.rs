@@ -18,7 +18,7 @@ use contracts::matching::{
     ConsumableBatch, MatchRequest, PqrCandidate, StandardCode, WeldSeam, WelderCandidate,
 };
 use contracts::parser::ParseRequest;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
 use base64::Engine as _;
@@ -83,10 +83,12 @@ fn build_sidecar_config() -> Result<SidecarConfig, String> {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "python".to_string());
     let script_path = resolve_sidecar_script_path()?;
+    let config_path = ai_config_path()?.to_string_lossy().into_owned();
 
     Ok(SidecarConfig {
         interpreter,
         script_path,
+        envs: vec![("WELDLAYER_AI_CONFIG_PATH".to_string(), config_path)],
     })
 }
 
@@ -110,6 +112,210 @@ struct PickedDrawingFile {
 struct DrawingPreviewPayload {
     mime_type: String,
     base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AiProviderConfig {
+    ocr: String,
+    layout: String,
+    reasoning: String,
+}
+
+impl Default for AiProviderConfig {
+    fn default() -> Self {
+        Self {
+            ocr: "rapidocr_local".to_string(),
+            layout: "onnx_local".to_string(),
+            reasoning: "disabled".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AiModelConfig {
+    ocr_dir: String,
+    layout_model: String,
+    reasoning_model: String,
+    reasoning_endpoint: String,
+}
+
+impl Default for AiModelConfig {
+    fn default() -> Self {
+        Self {
+            ocr_dir: "%APPDATA%\\WeldLayer\\models\\ocr".to_string(),
+            layout_model: "%APPDATA%\\WeldLayer\\models\\layout\\layout.onnx".to_string(),
+            reasoning_model: "qwen2.5:7b".to_string(),
+            reasoning_endpoint: "http://127.0.0.1:11434".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AiRuntimeConfig {
+    device: String,
+    threads: u16,
+    offline_mode: bool,
+    ocr_languages: Vec<String>,
+    candidate_confidence_threshold: f32,
+    association_confidence_threshold: f32,
+}
+
+impl Default for AiRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            device: "cpu".to_string(),
+            threads: 6,
+            offline_mode: true,
+            ocr_languages: vec!["zh".to_string(), "en".to_string()],
+            candidate_confidence_threshold: 0.55,
+            association_confidence_threshold: 0.70,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AiFeatureConfig {
+    enable_ocr: bool,
+    enable_layout_detection: bool,
+    enable_table_extraction: bool,
+    enable_llm_reasoning: bool,
+    enable_cloud_api: bool,
+}
+
+impl Default for AiFeatureConfig {
+    fn default() -> Self {
+        Self {
+            enable_ocr: true,
+            enable_layout_detection: true,
+            enable_table_extraction: true,
+            enable_llm_reasoning: false,
+            enable_cloud_api: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AiFieldAlias {
+    names: Vec<String>,
+}
+
+impl Default for AiFieldAlias {
+    fn default() -> Self {
+        Self { names: Vec::new() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AiFieldAliasMap {
+    material: AiFieldAlias,
+    thickness: AiFieldAlias,
+    part_no: AiFieldAlias,
+    interface_no: AiFieldAlias,
+    weld_method: AiFieldAlias,
+    filler: AiFieldAlias,
+}
+
+impl Default for AiFieldAliasMap {
+    fn default() -> Self {
+        Self {
+            material: AiFieldAlias {
+                names: vec!["材料".to_string(), "材质".to_string(), "母材".to_string()],
+            },
+            thickness: AiFieldAlias {
+                names: vec!["厚度".to_string(), "δ".to_string(), "t".to_string()],
+            },
+            part_no: AiFieldAlias {
+                names: vec!["件号".to_string(), "位号".to_string(), "编号".to_string()],
+            },
+            interface_no: AiFieldAlias {
+                names: vec!["接口号".to_string(), "接口".to_string(), "接管号".to_string()],
+            },
+            weld_method: AiFieldAlias {
+                names: vec!["焊接方法".to_string(), "焊接规程".to_string(), "WPS".to_string()],
+            },
+            filler: AiFieldAlias {
+                names: vec!["焊接材料".to_string(), "焊材".to_string(), "焊丝".to_string()],
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AiLayoutHintConfig {
+    prefer_title_block: String,
+    prefer_bom_region: String,
+    prefer_interface_region: String,
+    prefer_requirement_region: String,
+}
+
+impl Default for AiLayoutHintConfig {
+    fn default() -> Self {
+        Self {
+            prefer_title_block: "bottom_right".to_string(),
+            prefer_bom_region: "bottom_left".to_string(),
+            prefer_interface_region: "right_middle".to_string(),
+            prefer_requirement_region: "right_bottom".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AiProfileConfig {
+    name: String,
+    customer_name: String,
+    drawing_kinds: Vec<String>,
+    part_number_prefixes: Vec<String>,
+    field_alias: AiFieldAliasMap,
+    layout_hint: AiLayoutHintConfig,
+}
+
+impl Default for AiProfileConfig {
+    fn default() -> Self {
+        Self {
+            name: "pressure_vessel_default".to_string(),
+            customer_name: "default".to_string(),
+            drawing_kinds: vec!["容器图".to_string(), "管口方位图".to_string(), "装配图".to_string()],
+            part_number_prefixes: vec!["A".to_string(), "B".to_string(), "DN".to_string()],
+            field_alias: AiFieldAliasMap::default(),
+            layout_hint: AiLayoutHintConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AiConfig {
+    providers: AiProviderConfig,
+    models: AiModelConfig,
+    runtime: AiRuntimeConfig,
+    features: AiFeatureConfig,
+    profile: AiProfileConfig,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            providers: AiProviderConfig::default(),
+            models: AiModelConfig::default(),
+            runtime: AiRuntimeConfig::default(),
+            features: AiFeatureConfig::default(),
+            profile: AiProfileConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct AiConfigPayload {
+    config_path: String,
+    config: AiConfig,
 }
 
 fn infer_drawing_file_type(path: &Path) -> Option<&'static str> {
@@ -138,6 +344,67 @@ fn infer_preview_mime_type(path: &Path) -> &'static str {
         Some("webp") => "image/webp",
         _ => "application/octet-stream",
     }
+}
+
+fn weldlayer_config_dir() -> Result<PathBuf, String> {
+    if let Ok(appdata) = env::var("APPDATA") {
+        let trimmed = appdata.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed).join("WeldLayer").join("config"));
+        }
+    }
+    if let Ok(local_appdata) = env::var("LOCALAPPDATA") {
+        let trimmed = local_appdata.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed).join("WeldLayer").join("config"));
+        }
+    }
+    env::current_dir()
+        .map(|cwd| cwd.join(".weldlayer").join("config"))
+        .map_err(|e| format!("resolve fallback config directory failed: {e}"))
+}
+
+fn ai_config_path() -> Result<PathBuf, String> {
+    weldlayer_config_dir().map(|dir| dir.join("ai_config.toml"))
+}
+
+fn ensure_ai_config_parent(path: &Path) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "ai config path has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("create ai config directory failed for {}: {e}", parent.display()))
+}
+
+fn persist_ai_config(config: &AiConfig) -> Result<(), String> {
+    let path = ai_config_path()?;
+    ensure_ai_config_parent(&path)?;
+    let toml_text =
+        toml::to_string_pretty(config).map_err(|e| format!("serialize ai config failed: {e}"))?;
+    std::fs::write(&path, toml_text)
+        .map_err(|e| format!("write ai config failed for {}: {e}", path.display()))
+}
+
+fn load_ai_config_model() -> Result<AiConfig, String> {
+    let path = ai_config_path()?;
+    if !path.is_file() {
+        let default_config = AiConfig::default();
+        persist_ai_config(&default_config)?;
+        return Ok(default_config);
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read ai config failed for {}: {e}", path.display()))?;
+    toml::from_str::<AiConfig>(&content)
+        .map_err(|e| format!("parse ai config failed for {}: {e}", path.display()))
+}
+
+fn build_ai_config_payload(config: AiConfig) -> Result<String, String> {
+    let path = ai_config_path()?;
+    serde_json::to_string(&AiConfigPayload {
+        config_path: path.to_string_lossy().into_owned(),
+        config,
+    })
+    .map_err(|e| format!("serialize ai config payload failed: {e}"))
 }
 
 #[tauri::command]
@@ -261,6 +528,25 @@ pub fn read_drawing_preview(path: String) -> Result<String, String> {
         base64: base64::engine::general_purpose::STANDARD.encode(bytes),
     };
     serde_json::to_string(&payload).map_err(|e| format!("serialize drawing preview failed: {e}"))
+}
+
+#[tauri::command]
+pub fn get_ai_config_path() -> Result<String, String> {
+    ai_config_path().map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn load_ai_config() -> Result<String, String> {
+    let config = load_ai_config_model()?;
+    build_ai_config_payload(config)
+}
+
+#[tauri::command]
+pub fn save_ai_config(config_json: String) -> Result<String, String> {
+    let config = serde_json::from_str::<AiConfig>(&config_json)
+        .map_err(|e| format!("invalid ai config json: {e}"))?;
+    persist_ai_config(&config)?;
+    build_ai_config_payload(config)
 }
 
 #[tauri::command]
@@ -567,5 +853,14 @@ mod tests {
             Some("dwg")
         );
         assert_eq!(infer_drawing_file_type(Path::new("C:/demo/a.txt")), None);
+    }
+
+    #[test]
+    fn ai_config_defaults_serialize_to_toml() {
+        let config = AiConfig::default();
+        let toml_text = toml::to_string_pretty(&config).expect("default ai config should serialize");
+        assert!(toml_text.contains("[providers]"));
+        assert!(toml_text.contains("rapidocr_local"));
+        assert!(toml_text.contains("[profile.field_alias.material]"));
     }
 }

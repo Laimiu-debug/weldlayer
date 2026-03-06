@@ -33,6 +33,16 @@ pub struct WeldSeam {
     pub position_code: String,
     pub process_hint: String,
     pub review_status: ReviewStatus,
+    #[serde(default)]
+    pub weld_symbol: Option<String>,
+    #[serde(default)]
+    pub confidence_score: Option<f64>,
+    #[serde(default)]
+    pub source_kind: Option<String>,
+    #[serde(default)]
+    pub source_draw_ref: Option<String>,
+    #[serde(default)]
+    pub source_candidate_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

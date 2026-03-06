@@ -380,6 +380,7 @@ label {
 }
 
 input,
+textarea,
 select {
   width: 100%;
   border: 1px solid var(--line);
@@ -388,6 +389,12 @@ select {
   font-size: 14px;
   color: var(--ink);
   background: var(--surface-strong);
+  font: inherit;
+}
+
+textarea {
+  min-height: 88px;
+  resize: vertical;
 }
 
 button {
@@ -634,6 +641,20 @@ button:hover {
 }
 
 .form-grid.compact {
+  gap: 12px;
+}
+
+.span-2 {
+  grid-column: 1 / -1;
+}
+
+.settings-grid {
+  align-items: start;
+}
+
+.settings-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
 }
 
@@ -1102,6 +1123,22 @@ button:hover {
   font-size: 22px;
   line-height: 1;
   color: #173147;
+}
+
+.card-lite {
+  border: 1px solid #d9e4ee;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(241, 247, 251, 0.88));
+}
+
+.parse-file-context-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.parse-file-context-summary .queue-list {
+  margin: 0;
 }
 
 #parse-file-seam-body tr {
